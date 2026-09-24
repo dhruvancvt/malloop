@@ -80,6 +80,16 @@ python -m pytest tests
 The fixtures (encrypted and nested zips, a zip bomb, zip-slip, a synthetic UDIF DMG with thin and fat Mach-O) are generated in code.
 No real malware is included.
 
+The whole loop is tested without an API key or a VM:
+
+- `tests/test_agent_loop.py` drives the real CLI (unpack, triage, evidence brief, tool executor, budgets, report) with a
+  scripted stand-in for the Claude client and a fake sandbox. It also checks that sample text never appears outside `<untrusted>` tags.
+- `tests/test_guest_protocol.py` runs the real guest agent HTTP server on localhost against the real `Sandbox.detonate()`,
+  covering byte-exact upload, artifact collection, power-off on failure, token auth and path traversal. Only the sample execution is stubbed.
+
+The agent's first message is a structured brief (`malloop/brief.py`). Each section has its own budget, so large
+Ghidra and capa output is compacted instead of cut off (`MALLOOP_MAX_INITIAL_EVIDENCE_CHARS`, default 60000).
+
 ## Building the sandbox VM
 
 **Windows 10 Home has no Hyper-V**, so use VirtualBox (`MALLOOP_SANDBOX=virtualbox`, the default).

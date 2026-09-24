@@ -48,7 +48,8 @@ def write_report(run: Run, triage_report: dict, final: dict, tree: list[dict]) -
     return path
 
 
-def analyze(sample: Path, static_only: bool) -> None:
+def analyze(sample: Path, static_only: bool, client=None, sandbox=None) -> Path | None:
+    """Run the full pipeline and return the report path. `client`/`sandbox` are injectable for tests."""
     sha256 = hashlib.sha256(sample.read_bytes()).hexdigest()
     run = Run.create(config.RUNS_DIR, sample, sha256)
     print(f"[*] run dir: {run.run_dir}")
@@ -84,19 +85,20 @@ def analyze(sample: Path, static_only: bool) -> None:
     if static_only:
         print(json.dumps({"primary": primary["id"], "triage": triage_report, "static": static_report},
                          indent=2, default=str)[:5000])
-        return
+        return None
 
     print("[*] stage 3: agent loop")
     from .agent import run_agent  # imported lazily so --static-only works without an API key
 
-    executor = ToolExecutor(run, ghidra, get_sandbox(), all_strings, nodes, node_triage, primary)
+    executor = ToolExecutor(run, ghidra, sandbox or get_sandbox(), all_strings, nodes, node_triage, primary)
     evidence = {"container_tree": tree if len(tree) > 1 else None, "primary_target": primary["id"],
                 "triage": triage_report, "static": static_report, "sample_strings_head": all_strings[:300]}
-    final = run_agent(evidence, executor)
+    final = run_agent(evidence, executor, client=client)
     run.save("final", final)
     report = write_report(run, triage_report, final, tree)
     print(f"[+] verdict: {final.get('verdict')} ({final.get('confidence')})")
     print(f"[+] report: {report}")
+    return report
 
 
 def main() -> None:

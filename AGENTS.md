@@ -52,6 +52,10 @@ CI runs `lint`, `test` and `sample-guard` on every PR. All three are required to
   excluded from ruff. Keep them 2.7-compatible.
 - `malloop/guest/guest_agent.py` runs inside a bare Windows VM, so it must stay **stdlib-only**.
 - Add or update tests for behavior changes. For unpackers, include adversarial fixtures (bombs, traversal, malformed headers).
+- Test agent behavior with the `ScriptedClient` and `FakeSandbox` in `tests/test_agent_loop.py`, not with live API calls.
+  Test host-to-guest changes with the in-process guest server in `tests/test_guest_protocol.py`.
+- What the agent sees first is built by `malloop/brief.py`. When adding a new evidence section, give it its own compaction
+  there. Don't rely on the final clip, which exists only as a backstop.
 
 ## Git and PRs
 

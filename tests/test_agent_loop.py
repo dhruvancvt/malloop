@@ -264,3 +264,45 @@ def test_agent_sees_every_section_of_large_evidence():
     assert len(body) <= config.MAX_INITIAL_EVIDENCE_CHARS
     assert brief["static"]["capa"] and brief["static"]["ghidra"]["suspicious_functions"]
     assert brief["triage"]["pe"]["suspicious_imports"]
+
+
+def test_no_sandbox_hides_dynamic_tools(workspace):
+    from malloop.sandbox.base import NoSandbox
+
+    seen = {}
+
+    def try_anyway(m):
+        return [tool("run_dynamic", duration_seconds=30, network="none", hypothesis="h")]
+
+    def finish(m):
+        seen["result"] = only_result(m)
+        return [tool("finish", verdict="suspicious", confidence=0.4, summary="s", evidence=["e"])]
+
+    client = ScriptedClient([try_anyway, finish])
+    cli.analyze(make_bundle(workspace), static_only=False, client=client, sandbox=NoSandbox())
+
+    offered = {t["name"] for t in client.requests[0]["tools"]}
+    assert "run_dynamic" not in offered and "query_dynamic_events" not in offered
+    assert "switch_target" in offered and "finish" in offered
+    assert "Dynamic analysis: NOT available" in client.requests[0]["messages"][0]["content"]
+    # A model that calls it anyway gets a clear refusal and no budget is charged
+    assert "unavailable" in seen["result"]["error"]
+
+
+def test_virtualbox_availability(monkeypatch):
+    import subprocess
+    import sys
+
+    from malloop.sandbox.virtualbox import VirtualBoxSandbox
+
+    monkeypatch.setattr(config, "VBOXMANAGE", "C:/does/not/exist/VBoxManage.exe")
+    assert VirtualBoxSandbox().available is False
+
+    monkeypatch.setattr(config, "VBOXMANAGE", sys.executable)  # any existing file
+    monkeypatch.setattr(config, "VM_SNAPSHOT", "clean")
+    listing = 'SnapshotName="clean"\nSnapshotUUID="1234"\n'
+    monkeypatch.setattr(VirtualBoxSandbox, "_vbox",
+                        lambda self, *a, check=True: subprocess.CompletedProcess(a, 0, listing, ""))
+    assert VirtualBoxSandbox().available is True
+    monkeypatch.setattr(config, "VM_SNAPSHOT", "other")
+    assert VirtualBoxSandbox().available is False

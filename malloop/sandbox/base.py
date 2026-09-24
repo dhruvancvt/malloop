@@ -9,6 +9,11 @@ from .. import config
 
 
 class Sandbox(ABC):
+    @property
+    def available(self) -> bool:
+        """Whether this backend can actually detonate. When False, dynamic tools are hidden from the agent."""
+        return True
+
     @abstractmethod
     def restore(self) -> None:
         """Revert the VM to the clean snapshot and power it on."""
@@ -57,6 +62,10 @@ class Sandbox(ABC):
 
 class NoSandbox(Sandbox):
     """Used when no VM is configured: dynamic actions return a clear refusal instead of running anything."""
+
+    @property
+    def available(self) -> bool:
+        return False
 
     def restore(self) -> None:
         raise RuntimeError("no sandbox configured (set MALLOOP_SANDBOX)")

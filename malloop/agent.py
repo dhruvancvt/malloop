@@ -5,7 +5,7 @@ import anthropic
 
 from . import config
 from .brief import build_brief
-from .tools import TOOLS, ToolExecutor
+from .tools import ToolExecutor, tools_for
 
 SYSTEM = """You are a senior malware analyst driving an automated analysis pipeline.
 
@@ -41,12 +41,17 @@ def run_agent(initial_evidence: dict, executor: ToolExecutor, log=print, client=
     """Drive the tool-use loop. `client` defaults to a real Anthropic client; tests inject a scripted one."""
     client = client or anthropic.Anthropic()
     brief = build_brief(initial_evidence, config.MAX_INITIAL_EVIDENCE_CHARS)
+    sandbox = getattr(executor, "sandbox", None)
+    dynamic = bool(getattr(sandbox, "available", False))
+    tools = tools_for(dynamic)
+    capability = (f"Dynamic analysis: available ({config.MAX_DYNAMIC_SECONDS_TOTAL}s budget)." if dynamic else
+                  "Dynamic analysis: NOT available (no sandbox VM configured). Work from static evidence only, "
+                  "and state in your verdict what dynamic analysis would have needed to confirm.")
     messages = [{
         "role": "user",
         "content": "Initial deterministic analysis of the sample:\n"
                    + _clip(brief, config.MAX_INITIAL_EVIDENCE_CHARS)
-                   + f"\n\nBudget: {config.MAX_ITERATIONS} actions, "
-                   f"{config.MAX_DYNAMIC_SECONDS_TOTAL}s of dynamic execution. Begin.",
+                   + f"\n\nBudget: {config.MAX_ITERATIONS} actions. {capability} Begin.",
     }]
 
     for i in range(1, config.MAX_ITERATIONS + 1):
@@ -54,7 +59,7 @@ def run_agent(initial_evidence: dict, executor: ToolExecutor, log=print, client=
             model=config.MODEL,
             max_tokens=8000,
             system=SYSTEM,
-            tools=TOOLS,
+            tools=tools,
             messages=messages,
         )
         messages.append({"role": "assistant", "content": resp.content})

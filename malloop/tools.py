@@ -91,6 +91,12 @@ TOOLS = [
 ]
 
 TOOL_NAMES = {t["name"] for t in TOOLS}
+DYNAMIC_TOOLS = {"run_dynamic", "query_dynamic_events"}
+
+
+def tools_for(sandbox_available: bool) -> list[dict]:
+    """The catalog offered to the agent: dynamic tools are only offered when a sandbox can run them."""
+    return TOOLS if sandbox_available else [t for t in TOOLS if t["name"] not in DYNAMIC_TOOLS]
 
 
 def summarize_dynamic(report: dict) -> dict:
@@ -187,6 +193,8 @@ class ToolExecutor:
 
     def _run_dynamic(self, duration_seconds: int, network: str, hypothesis: str,
                      args: list[str] | None = None, dump_new_processes: bool = False) -> dict:
+        if not self.sandbox.available:
+            return {"error": "dynamic analysis is unavailable: no sandbox VM is configured"}
         duration_seconds = max(15, min(300, int(duration_seconds)))
         if network not in ("none", "simulated"):
             return {"error": "network must be 'none' or 'simulated'"}

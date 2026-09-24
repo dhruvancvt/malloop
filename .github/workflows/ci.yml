@@ -17,7 +17,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@v6
@@ -29,7 +29,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-python@v6
@@ -44,7 +44,7 @@ jobs:
     # disk image or archive. Test fixtures are generated in code at test time instead.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Reject binaries and archives

@@ -1,5 +1,5 @@
 anthropic>=1.7.0
-requests>=2.31
+requests>=2.34.2
 pefile>=2023.2.7
 yara-python>=4.5
 pyzipper>=0.3.6   # AES-encrypted zips

@@ -23,6 +23,14 @@ CAPA_BIN = _env("CAPA_BIN", "capa")
 FLOSS_BIN = _env("FLOSS_BIN", "floss")
 YARA_RULES_DIR = Path(_env("MALLOOP_YARA_DIR", str(ROOT / "rules")))
 GHIDRA_SCRIPTS_DIR = ROOT / "ghidra_scripts"
+SEVEN_ZIP = _env("SEVEN_ZIP", "")  # optional; auto-detected on PATH / Program Files
+
+# Recursive unpacking limits (zip-bomb and resource guards)
+UNPACK_MAX_DEPTH = int(_env("MALLOOP_UNPACK_MAX_DEPTH", "4"))
+UNPACK_MAX_FILES = int(_env("MALLOOP_UNPACK_MAX_FILES", "1000"))
+UNPACK_MAX_TOTAL_BYTES = int(_env("MALLOOP_UNPACK_MAX_TOTAL_BYTES", str(2 * 1024**3)))
+UNPACK_MAX_FILE_BYTES = int(_env("MALLOOP_UNPACK_MAX_FILE_BYTES", str(512 * 1024**2)))
+UNPACK_MAX_RATIO = int(_env("MALLOOP_UNPACK_MAX_RATIO", "250"))
 
 # Sandbox
 SANDBOX_BACKEND = _env("MALLOOP_SANDBOX", "virtualbox")  # virtualbox | hyperv | none

@@ -18,25 +18,38 @@ MAGIC = [
 ]
 
 
-def detect_type(data: bytes, path: Path) -> str:
-    for sig, kind in MAGIC:
-        if data.startswith(sig):
-            return kind
-    # DMG files carry a 'koly' trailer in the last 512 bytes
-    if len(data) > 512 and data[-512:-508] == b"koly":
+def detect_type(head: bytes, tail: bytes, path: Path) -> str:
+    """head: first 2 KiB of the file, tail: last 512 bytes."""
+    # DMG (UDIF) files carry a 'koly' trailer in the last 512 bytes. Check it before leading magic:
+    # an uncompressed DMG starts with raw disk data, which can itself begin with MZ/Mach-O/PK bytes.
+    if len(tail) == 512 and tail[:4] == b"koly":
         return "dmg"
+    for sig, kind in MAGIC:
+        if head.startswith(sig):
+            return kind
+    if head[1024:1026] in (b"H+", b"HX"):
+        return "hfs"
+    if head[32:36] == b"NXSB":
+        return "apfs"
     ext = path.suffix.lower()
     if ext in {".ps1", ".vbs", ".js", ".bat", ".cmd", ".sh", ".py", ".hta"}:
         return "script"
     return "unknown"
 
 
+def sniff_type(path: Path) -> str:
+    with path.open("rb") as f:
+        head = f.read(2048)
+        size = f.seek(0, 2)
+        f.seek(max(0, size - 512))
+        tail = f.read(512)
+    return detect_type(head, tail, path)
+
+
 def entropy(data: bytes) -> float:
     if not data:
         return 0.0
-    counts = [0] * 256
-    for b in data:
-        counts[b] += 1
+    counts = [data.count(bytes([i])) for i in range(256)]
     n = len(data)
     return -sum(c / n * math.log2(c / n) for c in counts if c)
 
@@ -107,7 +120,7 @@ def yara_scan(path: Path, rules_dir: Path) -> list[str]:
 
 def triage(path: Path, rules_dir: Path) -> dict:
     data = path.read_bytes()
-    kind = detect_type(data, path)
+    kind = detect_type(data[:2048], data[-512:], path)
     strs = strings(data)
     report = {
         "file": path.name,

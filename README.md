@@ -3,20 +3,22 @@
 Deterministic + agentic malware analysis loop.
 
 ```
-sample ─▶ triage (hashes, type, entropy, IOCs, YARA, PE)      ┐ deterministic,
+sample ─▶ recursive unpack (zip, dmg, 7z/rar with 7-Zip)
+       ─▶ triage (hashes, type, entropy, IOCs, YARA, PE)      ┐ deterministic,
        ─▶ static (Ghidra headless, capa, FLOSS)               ┘ always runs
        ─▶ Claude agent ◀──▶ fixed tool catalog ◀──▶ sandbox VM (snapshot per run)
        ─▶ report.md + full action trace
 ```
 
 The agent never gets a shell. It can only call the actions in `malloop/tools.py`
-(decompile, xrefs, string search, detonate, query telemetry, finish). Each call is validated,
+(decompile, xrefs, string search, list/switch extracted files, detonate, query telemetry, finish). Each call is validated,
 budgeted and logged to `runs/<id>/trace.jsonl`.
 
 ## Layout
 
 | Path | Role |
 |---|---|
+| `malloop/unpack.py` | Stage 0: bounded recursive unpacking of zip/dmg (+ 7-Zip formats) |
 | `malloop/triage.py` | Stage 1: pure-Python triage, never executes the sample |
 | `malloop/static_analysis.py` | Stage 2: capa / FLOSS / Ghidra headless wrappers |
 | `ghidra_scripts/` | Ghidra post-scripts: overview, decompile, xrefs |
@@ -43,6 +45,41 @@ set ANTHROPIC_API_KEY=...
 python -m malloop analyze path/to/sample.exe
 ```
 
+## Recursive unpacking
+
+Containers are unpacked recursively before triage. Every extracted file becomes a node in a tree
+(`runs/<id>/unpack.json`). Each node is triaged, and the most analyzable, most suspicious file is picked as
+the primary target: PE first, then Mach-O and ELF, then scripts and documents. The agent sees the whole tree
+and can `switch_target` to any other node.
+
+| Format | Handler |
+|---|---|
+| ZIP | `zipfile` / `pyzipper` (AES). Tries `infected`, `malware`, `virus` as passwords. |
+| DMG | 7-Zip if installed (full HFS+/APFS with filenames). Otherwise a built-in UDIF decoder (zlib, bzip2, ADC, LZMA, raw) rebuilds the disk image and carves Mach-O binaries (thin and fat) from it. |
+| 7z, RAR, HFS, APFS | 7-Zip only |
+
+Guards: max depth, file count, total bytes, per-file size, and compression ratio (zip bombs). Output bytes
+are counted as they're written, not taken from headers. Path traversal and drive-letter names are stripped,
+symlinks are never extracted, and identical files are analyzed once (`duplicate_of`).
+All limits are `MALLOOP_UNPACK_*` env vars.
+
+Without 7-Zip, DMGs lose filenames and non-Mach-O files, and LZFSE-compressed DMGs can't be decoded
+(this is reported in the node notes). Installing 7-Zip is recommended:
+
+```bash
+winget install 7zip.7zip
+```
+
+## Tests
+
+```bash
+pip install pytest
+python -m pytest tests
+```
+
+The fixtures (encrypted and nested zips, a zip bomb, zip-slip, a synthetic UDIF DMG with thin and fat Mach-O) are generated in code.
+No real malware is included.
+
 ## Building the sandbox VM
 
 **Windows 10 Home has no Hyper-V**, so use VirtualBox (`MALLOOP_SANDBOX=virtualbox`, the default).
@@ -68,7 +105,7 @@ Every `run_dynamic` call restores `clean`, detonates, collects data and hard pow
 
 `MALLOOP_MODEL`, `MALLOOP_MAX_ITERATIONS`, `MALLOOP_MAX_DYNAMIC_SECONDS`, `MALLOOP_SANDBOX`,
 `MALLOOP_VM_NAME`, `MALLOOP_VM_SNAPSHOT`, `MALLOOP_GUEST_URL`, `MALLOOP_GUEST_TOKEN`,
-`GHIDRA_HEADLESS`, `CAPA_BIN`, `FLOSS_BIN`, `VBOXMANAGE`. See `malloop/config.py`.
+`GHIDRA_HEADLESS`, `CAPA_BIN`, `FLOSS_BIN`, `SEVEN_ZIP`, `VBOXMANAGE`, `MALLOOP_UNPACK_*`. See `malloop/config.py`.
 
 ## Safety notes
 
@@ -78,8 +115,12 @@ Every `run_dynamic` call restores `clean`, detonates, collects data and hard pow
 
 ## Roadmap
 
-- Recursive unpacking (zip/7z/DMG/MSI children fed back through triage)
+- More unpackers: MSI, PKG (xar), installers (NSIS/Inno), UPX
 - macOS and Linux guests (ESF / eBPF telemetry)
 - PCAP capture on the host-only adapter
 - Config extractors (e.g. CAPE's) exposed as an `extract_config` tool
 - Replay mode: re-run a `trace.jsonl` without the model
+
+## License
+
+[MIT](LICENSE)

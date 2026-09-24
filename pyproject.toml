@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Deterministic + agentic malware analysis loop"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 
 [tool.ruff]
 line-length = 120

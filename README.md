@@ -120,3 +120,7 @@ Every `run_dynamic` call restores `clean`, detonates, collects data and hard pow
 - PCAP capture on the host-only adapter
 - Config extractors (e.g. CAPE's) exposed as an `extract_config` tool
 - Replay mode: re-run a `trace.jsonl` without the model
+
+## License
+
+[MIT](LICENSE)

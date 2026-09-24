@@ -80,7 +80,11 @@ def pe_info(path: Path) -> dict:
         import pefile
     except ImportError:
         return {"error": "pefile not installed"}
-    pe = pefile.PE(str(path), fast_load=False)
+    try:
+        pe = pefile.PE(str(path), fast_load=False)
+    except pefile.PEFormatError as e:
+        # Malformed headers are common in malware; report it instead of aborting the whole run.
+        return {"error": f"malformed PE: {e}"}
     imports = {}
     for entry in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []):
         imports[entry.dll.decode(errors="replace")] = [

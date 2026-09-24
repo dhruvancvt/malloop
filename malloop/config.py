@@ -16,6 +16,7 @@ MODEL = _env("MALLOOP_MODEL", "claude-opus-5-5")
 MAX_ITERATIONS = int(_env("MALLOOP_MAX_ITERATIONS", "12"))
 MAX_DYNAMIC_SECONDS_TOTAL = int(_env("MALLOOP_MAX_DYNAMIC_SECONDS", "600"))
 MAX_TOOL_OUTPUT_CHARS = int(_env("MALLOOP_MAX_TOOL_OUTPUT_CHARS", "12000"))
+MAX_INITIAL_EVIDENCE_CHARS = int(_env("MALLOOP_MAX_INITIAL_EVIDENCE_CHARS", "60000"))
 
 # Static tooling (leave blank to skip that tool)
 GHIDRA_HEADLESS = _env("GHIDRA_HEADLESS", "")  # e.g. C:\ghidra\support\analyzeHeadless.bat

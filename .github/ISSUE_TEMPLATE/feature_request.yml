@@ -1,0 +1,21 @@
+name: Feature request
+description: Propose a new analyzer, unpacker, agent tool or sandbox capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What analysis gap or workflow pain does this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: If this adds an agent tool, describe its name, typed parameters and what it returns.
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety considerations
+      description: Does this touch sandbox isolation, network access, or what the agent is allowed to do?

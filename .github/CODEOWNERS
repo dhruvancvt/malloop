@@ -1,0 +1,10 @@
+# Every change needs review from the maintainer.
+*                           @dhruvancvt
+
+# Security-critical paths: sandbox isolation, the agent's tool surface, and CI/repo policy.
+/malloop/sandbox/           @dhruvancvt
+/malloop/guest/             @dhruvancvt
+/malloop/tools.py           @dhruvancvt
+/malloop/agent.py           @dhruvancvt
+/malloop/unpack.py          @dhruvancvt
+/.github/                   @dhruvancvt

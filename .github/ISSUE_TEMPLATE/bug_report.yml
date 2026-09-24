@@ -1,0 +1,33 @@
+name: Bug report
+description: Something in malloop doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never attach malware samples, archives of samples, or download links to them.**
+        Refer to samples by SHA256 only. Report security vulnerabilities in malloop itself privately (see SECURITY.md), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Command line, relevant config/env vars, and the sample type (e.g. "PE32 DLL", "UDIF DMG, LZFSE") plus SHA256 if public.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output / trace
+      description: Console output or relevant lines from runs/<id>/trace.jsonl. Remove anything sensitive.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Windows 10 Home, Python 3.12, VirtualBox 7.1, Ghidra 11.3, 7-Zip 24"

@@ -1,0 +1,19 @@
+[project]
+name = "malloop"
+version = "0.1.0"
+description = "Deterministic + agentic malware analysis loop"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+# Ghidra scripts run under Jython 2.7 with Ghidra-injected globals.
+extend-exclude = ["ghidra_scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I"]
+ignore = ["E501"]  # long tool-description strings are intentional
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

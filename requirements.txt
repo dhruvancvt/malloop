@@ -1,6 +1,6 @@
 anthropic>=1.7.0
 requests>=2.34.2
-pefile>=2023.2.7
+pefile>=2024.8.26
 yara-python>=4.5
 pyzipper>=0.3.6   # AES-encrypted zips
 # Optional external tools (install separately, put on PATH or set env vars):

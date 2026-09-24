@@ -8,7 +8,8 @@ def test_entropy_bounds():
 
 
 def test_strings_ascii_and_utf16():
-    data = b"\x00\x01hello world\x00" + "wide string".encode("utf-16le") + b"\xff"
+    # Wide strings in real binaries sit on aligned, null-padded boundaries
+    data = b"\x00\x01hello world\x00\x00" + "wide string".encode("utf-16le") + b"\xff"
     found = strings(data)
     assert "hello world" in found
     assert "wide string" in found

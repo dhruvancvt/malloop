@@ -18,8 +18,8 @@ import re
 import shutil
 import struct
 import subprocess
-import zlib
 import zipfile
+import zlib
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 

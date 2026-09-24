@@ -1,7 +1,7 @@
 anthropic>=1.7.0
 requests>=2.34.2
 pefile>=2024.8.26
-yara-python>=4.5
+yara-python>=4.5.4
 pyzipper>=0.3.6   # AES-encrypted zips
 # Optional external tools (install separately, put on PATH or set env vars):
 #   Ghidra 11+  -> set GHIDRA_HEADLESS to support\analyzeHeadless.bat

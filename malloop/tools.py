@@ -10,6 +10,34 @@ from .sandbox import Sandbox
 from .static_analysis import Ghidra, run_static
 from .triage import triage
 
+READ_MAX_BYTES = 8000
+HEX_MAX_BYTES = 1024
+
+
+def _looks_text(data: bytes) -> bool:
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return True
+    if not data or b"\x00" in data:
+        return not data
+    printable = sum(32 <= b < 127 or b in (9, 10, 13) or b >= 128 for b in data)
+    return printable / len(data) > 0.9
+
+
+def _decode_text(data: bytes) -> str:
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8", errors="replace")
+
+
+def _hexdump(data: bytes, base: int) -> str:
+    lines = []
+    for i in range(0, len(data), 16):
+        row = data[i:i + 16]
+        ascii_ = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+        lines.append(f"{base + i:08x}  {row.hex(' '):<47}  {ascii_}")
+    return "\n".join(lines)
+
+
 # Types the Windows analysis guest can meaningfully execute.
 WINDOWS_RUNNABLE = {"pe", "script", "ole", "pdf", "zip", "unknown"}
 
@@ -28,6 +56,17 @@ TOOLS = [
         "name": "search_strings",
         "description": "Regex search over all extracted strings (static + FLOSS-decoded). Returns up to 100 matches.",
         "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]},
+    },
+    {
+        "name": "read_file",
+        "description": "Read a byte range of the current target. Text (scripts, configs, documents) is returned decoded; binary data is returned as a hex dump (at most 1024 bytes). Use this to read script samples in full instead of search_strings.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "offset": {"type": "integer", "minimum": 0},
+                "length": {"type": "integer", "minimum": 1, "maximum": READ_MAX_BYTES},
+            },
+        },
     },
     {
         "name": "list_extracted",
@@ -190,6 +229,23 @@ class ToolExecutor:
     def _search_strings(self, pattern: str) -> dict:
         rx = re.compile(pattern, re.I)
         return {"matches": [s for s in self.all_strings if rx.search(s)][:100]}
+
+    def _read_file(self, offset: int = 0, length: int = 4000) -> dict:
+        path = Path(self.target["path"])
+        size = path.stat().st_size
+        offset = max(0, int(offset))
+        length = max(1, min(READ_MAX_BYTES, int(length)))
+        with path.open("rb") as f:
+            f.seek(offset)
+            data = f.read(length)
+        result = {"target": self.target["id"], "name": self.target["name"], "size": size, "offset": offset}
+        if _looks_text(data):
+            result.update(encoding="text", content=_decode_text(data))
+        else:
+            data = data[:HEX_MAX_BYTES]
+            result.update(encoding="hex", content=_hexdump(data, offset))
+        result.update(returned_bytes=len(data), eof=offset + len(data) >= size)
+        return result
 
     def _run_dynamic(self, duration_seconds: int, network: str, hypothesis: str,
                      args: list[str] | None = None, dump_new_processes: bool = False) -> dict:

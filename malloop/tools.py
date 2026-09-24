@@ -6,7 +6,11 @@ from collections import Counter
 from . import config
 from .evidence import Run
 from .sandbox import Sandbox
-from .static_analysis import Ghidra
+from .static_analysis import Ghidra, run_static
+from .triage import triage
+
+# Types the Windows analysis guest can meaningfully execute.
+WINDOWS_RUNNABLE = {"pe", "script", "ole", "pdf", "zip", "unknown"}
 
 TOOLS = [
     {
@@ -23,6 +27,16 @@ TOOLS = [
         "name": "search_strings",
         "description": "Regex search over all extracted strings (static + FLOSS-decoded). Returns up to 100 matches.",
         "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]},
+    },
+    {
+        "name": "list_extracted",
+        "description": "List every file recursively unpacked from the submitted container (zip/dmg/...), with type, size, entropy, YARA hits and unpack notes. Node ids are used by switch_target.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "switch_target",
+        "description": "Make a different extracted file the current analysis target: runs triage + full static analysis on it and points decompile/xrefs/search_strings/run_dynamic at it.",
+        "input_schema": {"type": "object", "properties": {"node_id": {"type": "string"}}, "required": ["node_id"]},
     },
     {
         "name": "run_dynamic",
@@ -101,12 +115,28 @@ def summarize_dynamic(report: dict) -> dict:
     }
 
 
+def compact_tree(nodes: list[dict], node_triage: dict[str, dict]) -> list[dict]:
+    out = []
+    for n in nodes:
+        t = node_triage.get(n["id"], {})
+        out.append({k: v for k, v in {
+            "id": n["id"], "name": n["name"], "type": n["type"], "size": n["size"], "depth": n["depth"],
+            "parent": n["parent"], "sha256": n["sha256"], "entropy": t.get("entropy"), "yara": t.get("yara") or None,
+            "duplicate_of": n["duplicate_of"], "unpacked_via": n["method"], "notes": n["notes"] or None,
+        }.items() if v is not None})
+    return out
+
+
 class ToolExecutor:
-    def __init__(self, run: Run, ghidra: Ghidra, sandbox: Sandbox, all_strings: list[str]):
+    def __init__(self, run: Run, ghidra: Ghidra, sandbox: Sandbox, all_strings: list[str],
+                 nodes: list[dict], node_triage: dict[str, dict], target: dict):
         self.run = run
         self.ghidra = ghidra
         self.sandbox = sandbox
         self.all_strings = all_strings
+        self.nodes = {n["id"]: n for n in nodes}
+        self.node_triage = node_triage
+        self.target = target
         self.dynamic_reports: list[dict] = []
         self.final: dict | None = None
 
@@ -121,6 +151,28 @@ class ToolExecutor:
             result = {"error": f"{type(e).__name__}: {e}"}
         self.run.log_action(name, params, result)
         return result
+
+    def _list_extracted(self) -> dict:
+        return {"current_target": self.target["id"],
+                "nodes": compact_tree(list(self.nodes.values()), self.node_triage)}
+
+    def _switch_target(self, node_id: str) -> dict:
+        node = self.nodes.get(node_id)
+        if node is None:
+            return {"error": f"unknown node {node_id}"}
+        if node["duplicate_of"]:
+            return {"error": f"{node_id} is identical to {node['duplicate_of']}; switch to that instead"}
+        path = Path(node["path"])
+        triage_report, strs = triage(path, config.YARA_RULES_DIR)
+        self.ghidra = Ghidra(path, self.run.run_dir / "ghidra" / node_id)
+        static_report = run_static(path, self.ghidra)
+        floss = [x for v in static_report["floss"].values() if isinstance(v, list) for x in v if x]
+        self.all_strings = strs + floss
+        self.run.sample = path
+        self.target = node
+        self.run.save(f"triage_{node_id}", triage_report)
+        self.run.save(f"static_{node_id}", static_report)
+        return {"target": node_id, "name": node["name"], "triage": triage_report, "static": static_report}
 
     def _decompile_function(self, target: str) -> dict:
         return self.ghidra.decompile(target)
@@ -137,6 +189,9 @@ class ToolExecutor:
         duration_seconds = max(15, min(300, int(duration_seconds)))
         if network not in ("none", "simulated"):
             return {"error": "network must be 'none' or 'simulated'"}
+        if self.target["type"] not in WINDOWS_RUNNABLE:
+            return {"error": f"current target is type '{self.target['type']}'; the sandbox only has a Windows "
+                             "guest. Analyze it statically, or switch_target to a Windows-runnable file."}
         remaining = config.MAX_DYNAMIC_SECONDS_TOTAL - self.run.dynamic_seconds_used
         if duration_seconds > remaining:
             return {"error": f"dynamic budget exhausted ({remaining}s left)"}

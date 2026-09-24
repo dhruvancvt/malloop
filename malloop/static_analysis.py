@@ -49,7 +49,7 @@ class Ghidra:
 
     def __init__(self, sample: Path, workdir: Path):
         self.sample = sample
-        self.project_dir = workdir / "ghidra_project"
+        self.project_dir = workdir
         self.project_dir.mkdir(parents=True, exist_ok=True)
         self.imported = False
 

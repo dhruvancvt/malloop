@@ -98,6 +98,10 @@ def test_rejects_bad_token(guest):
         assert r.status_code == 403
     r = requests.post(guest["url"] + "/run", json={"duration": 1}, headers={"X-Malloop-Token": "wrong"}, timeout=5)
     assert r.status_code == 403
+    # A rejected multipart upload must still get a clean 403, not a connection reset.
+    r = requests.post(guest["url"] + "/sample", files={"file": ("x.exe", b"MZ" * 5000)},
+                      headers={"X-Malloop-Token": "wrong"}, timeout=5)
+    assert r.status_code == 403
     assert guest["seen"] == {}                               # nothing ran
 
 

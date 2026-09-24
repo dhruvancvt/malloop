@@ -50,7 +50,11 @@ CI runs `lint`, `test` and `sample-guard` on every PR. All three are required to
 - Tool results and reports are plain JSON-serializable dicts.
 - `ghidra_scripts/` run under Ghidra's Jython (Python 2.7 syntax, Ghidra globals like `currentProgram`). They're
   excluded from ruff. Keep them 2.7-compatible.
-- `malloop/guest/guest_agent.py` runs inside a bare Windows VM, so it must stay **stdlib-only**.
+- `malloop/guest/guest_agent.py` (Windows detonation VM) and `malloop/worker/worker_agent.py` (Linux/REMnux
+  static worker) both run inside bare VMs, so they must stay **stdlib-only**. Neither ever executes a sample:
+  the guest detonates under instrumentation; the worker only parses with capa/FLOSS.
+- Keep capa/FLOSS output parsing (`_parse_capa`, `_parse_floss` in `static_analysis.py`) on the host so it is
+  tested without a worker. The worker returns raw tool JSON; the host parses it.
 - Add or update tests for behavior changes. For unpackers, include adversarial fixtures (bombs, traversal, malformed headers).
 - Test agent behavior with the `ScriptedClient` and `FakeSandbox` in `tests/test_agent_loop.py`, not with live API calls.
   Test host-to-guest changes with the in-process guest server in `tests/test_guest_protocol.py`.

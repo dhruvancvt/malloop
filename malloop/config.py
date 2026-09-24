@@ -26,6 +26,12 @@ YARA_RULES_DIR = Path(_env("MALLOOP_YARA_DIR", str(ROOT / "rules")))
 GHIDRA_SCRIPTS_DIR = ROOT / "ghidra_scripts"
 SEVEN_ZIP = _env("SEVEN_ZIP", "")  # optional; auto-detected on PATH / Program Files
 
+# Static-analysis worker: run capa/FLOSS inside an isolated Linux VM (e.g. REMnux) over the host-only
+# network instead of installing them on the host. Blank = run capa/FLOSS locally (or skip if absent).
+STATIC_WORKER_URL = _env("MALLOOP_STATIC_WORKER_URL", "")  # e.g. http://192.168.56.20:8766
+STATIC_WORKER_TOKEN = _env("MALLOOP_STATIC_WORKER_TOKEN", "change-me")
+STATIC_WORKER_TIMEOUT = int(_env("MALLOOP_STATIC_WORKER_TIMEOUT", "1200"))
+
 # Recursive unpacking limits (zip-bomb and resource guards)
 UNPACK_MAX_DEPTH = int(_env("MALLOOP_UNPACK_MAX_DEPTH", "4"))
 UNPACK_MAX_FILES = int(_env("MALLOOP_UNPACK_MAX_FILES", "1000"))

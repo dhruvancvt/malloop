@@ -22,6 +22,8 @@ budgeted and logged to `runs/<id>/trace.jsonl`.
 | `malloop/triage.py` | Stage 1: pure-Python triage, never executes the sample |
 | `malloop/static_analysis.py` | Stage 2: capa / FLOSS / Ghidra headless wrappers |
 | `ghidra_scripts/` | Ghidra post-scripts: overview, decompile, xrefs |
+| `malloop/static_worker.py` | Host client for the REMnux static worker (capa/FLOSS over host-only net) |
+| `malloop/worker/worker_agent.py` | Runs inside the REMnux VM: receives a file, runs capa/FLOSS, returns JSON |
 | `malloop/tools.py` | Agent tool catalog + deterministic executor |
 | `malloop/agent.py` | Claude tool-use loop with iteration and dynamic-time budgets |
 | `malloop/sandbox/` | VM lifecycle backends (VirtualBox, Hyper-V) |
@@ -36,7 +38,8 @@ python -m malloop analyze path/to/file --static-only
 ```
 
 Add capa, FLOSS and Ghidra (`set GHIDRA_HEADLESS=C:\ghidra\support\analyzeHeadless.bat`) to get the full static stage.
-Missing tools are skipped, not fatal.
+Missing tools are skipped, not fatal. Instead of installing capa and FLOSS on the host, you can run them in an
+isolated Linux VM — see [Static worker](#static-worker-capa--floss-in-remnux).
 
 ## Full loop
 
@@ -111,10 +114,34 @@ Use `hyperv` only on Pro/Enterprise.
 
 Every `run_dynamic` call restores `clean`, detonates, collects data and hard powers off the VM.
 
+## Static worker: capa + FLOSS in REMnux
+
+capa and FLOSS are the heavy reverse-engineering tools in stage 2. Rather than installing them on your host,
+run them inside an isolated Linux VM (e.g. [REMnux](https://remnux.org/), which ships both). The host uploads
+each file to a worker over the host-only network; the worker runs the tools and returns JSON. Ghidra and YARA
+still run on the host. If no worker is configured, capa/FLOSS run locally (or are skipped if absent) as before.
+
+The worker only parses samples with capa/FLOSS; it never executes them. Still, isolate the VM exactly like the
+detonation guest: host-only networking, no shared folders, no internet.
+
+1. In the REMnux VM (host-only network, e.g. guest `192.168.56.20`, host `192.168.56.1`):
+   - Confirm capa and FLOSS are on `PATH` (`capa -h`, `floss -h`). They are preinstalled on REMnux.
+   - Copy `malloop/worker/worker_agent.py` into the VM (over the host-only network, e.g. `scp`).
+   - Start it at boot: `python3 worker_agent.py --token <secret> --host 0.0.0.0 --port 8766`
+   - Allow inbound TCP 8766 on the host-only interface.
+2. On the host:
+   ```bash
+   set MALLOOP_STATIC_WORKER_URL=http://192.168.56.20:8766
+   set MALLOOP_STATIC_WORKER_TOKEN=<secret>
+   ```
+
+The worker is stateless: each request writes the upload to a temp file, runs the tools, and deletes it.
+
 ## Configuration (env vars)
 
-`MALLOOP_MODEL`, `MALLOOP_MAX_ITERATIONS`, `MALLOOP_MAX_DYNAMIC_SECONDS`, `MALLOOP_SANDBOX`,
-`MALLOOP_VM_NAME`, `MALLOOP_VM_SNAPSHOT`, `MALLOOP_GUEST_URL`, `MALLOOP_GUEST_TOKEN`,
+`MALLOOP_MODEL`, `MALLOOP_MAX_ITERATIONS`, `MALLOOP_MAX_DYNAMIC_SECONDS`, `MALLOOP_MAX_INITIAL_EVIDENCE_CHARS`,
+`MALLOOP_SANDBOX`, `MALLOOP_VM_NAME`, `MALLOOP_VM_SNAPSHOT`, `MALLOOP_GUEST_URL`, `MALLOOP_GUEST_TOKEN`,
+`MALLOOP_STATIC_WORKER_URL`, `MALLOOP_STATIC_WORKER_TOKEN`, `MALLOOP_STATIC_WORKER_TIMEOUT`,
 `GHIDRA_HEADLESS`, `CAPA_BIN`, `FLOSS_BIN`, `SEVEN_ZIP`, `VBOXMANAGE`, `MALLOOP_UNPACK_*`. See `malloop/config.py`.
 
 ## Safety notes

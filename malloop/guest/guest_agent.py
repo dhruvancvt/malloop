@@ -162,10 +162,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
-        if not self._auth():
-            return
+        # Drain the request body first so a rejected upload still gets a clean response (no socket reset).
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
+        if not self._auth():
+            return
         if self.path == "/sample":
             # Minimal multipart parsing: single file field
             boundary = self.headers["Content-Type"].split("boundary=")[1].encode()

@@ -12,6 +12,9 @@ You receive deterministic triage and static-analysis results for one sample. You
 actions from a fixed tool catalog; each runs deterministically in an isolated lab and returns JSON.
 
 Method:
+- If the submission was a container (zip/dmg), `container_tree` lists everything unpacked from it and a
+  primary target was auto-selected. Use switch_target to examine other files (installers, droppers,
+  second binaries, scripts, macro documents) when they could matter to the verdict.
 - Form explicit hypotheses from the static evidence (capabilities, imports, strings, decompiled code).
 - Choose the cheapest action that can confirm or refute each hypothesis. Static tools are cheap;
   run_dynamic is expensive and budgeted, so use it when static evidence is exhausted, the sample is

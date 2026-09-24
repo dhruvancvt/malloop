@@ -15,15 +15,9 @@ def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, errors="replace")
 
 
-def capa(path: Path) -> dict:
-    if not shutil.which(config.CAPA_BIN):
-        return {"skipped": "capa not found"}
-    proc = _run([config.CAPA_BIN, "-j", str(path)], timeout=600)
-    if proc.returncode != 0:
-        return {"error": proc.stderr[-2000:]}
-    raw = json.loads(proc.stdout)
+def _parse_capa(raw: dict) -> dict:
     caps = []
-    for name, rule in raw.get("rules", {}).items():
+    for name, rule in (raw.get("rules") or {}).items():
         meta = rule.get("meta", {})
         caps.append({
             "capability": name,
@@ -33,15 +27,43 @@ def capa(path: Path) -> dict:
     return {"capabilities": caps}
 
 
+def _parse_floss(raw: dict) -> dict:
+    strings = raw.get("strings", {})
+    return {k: [s.get("string") for s in strings.get(k, [])][:300]
+            for k in ("decoded_strings", "stack_strings", "tight_strings")}
+
+
+def capa(path: Path) -> dict:
+    if not shutil.which(config.CAPA_BIN):
+        return {"skipped": "capa not found"}
+    proc = _run([config.CAPA_BIN, "-j", str(path)], timeout=600)
+    if proc.returncode != 0:
+        return {"error": proc.stderr[-2000:]}
+    return _parse_capa(json.loads(proc.stdout))
+
+
 def floss(path: Path) -> dict:
     if not shutil.which(config.FLOSS_BIN):
         return {"skipped": "floss not found"}
     proc = _run([config.FLOSS_BIN, "-j", "-q", str(path)], timeout=900)
     if proc.returncode != 0:
         return {"error": proc.stderr[-2000:]}
-    raw = json.loads(proc.stdout).get("strings", {})
-    return {k: [s.get("string") for s in raw.get(k, [])][:300]
-            for k in ("decoded_strings", "stack_strings", "tight_strings")}
+    return _parse_floss(json.loads(proc.stdout))
+
+
+# Maps a tool name to the host-side parser for its raw JSON, when the worker ran it.
+_WORKER_PARSERS = {"capa": _parse_capa, "floss": _parse_floss}
+
+
+def static_from_worker(path: Path, worker) -> dict:
+    """Ask the worker to run capa+FLOSS on `path`; parse each tool's raw JSON here on the host."""
+    out = {}
+    for name, res in worker.analyze(path, tuple(_WORKER_PARSERS)).items():
+        if isinstance(res, dict) and res.get("ok"):
+            out[name] = _WORKER_PARSERS[name](res.get("result") or {})
+        else:
+            out[name] = res  # {"skipped"|"error": ...} passes straight through
+    return out
 
 
 class Ghidra:
@@ -89,5 +111,18 @@ class Ghidra:
         return self._headless("xrefs.py", [target], import_=False)
 
 
-def run_static(path: Path, ghidra: Ghidra) -> dict:
-    return {"capa": capa(path), "floss": floss(path), "ghidra": ghidra.overview()}
+def run_static(path: Path, ghidra: Ghidra, worker="auto") -> dict:
+    """capa + FLOSS + Ghidra. capa/FLOSS run in the static worker when one is configured, else locally.
+
+    `worker`: "auto" resolves it from config; None forces local tools; or pass a StaticWorker (tests).
+    """
+    if worker == "auto":
+        from .static_worker import get_static_worker
+        worker = get_static_worker()
+    if worker is not None:
+        report = static_from_worker(path, worker)
+        report["worker"] = worker.url
+    else:
+        report = {"capa": capa(path), "floss": floss(path)}
+    report["ghidra"] = ghidra.overview()
+    return report

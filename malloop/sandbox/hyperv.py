@@ -1,6 +1,9 @@
-"""Hyper-V backend. Requires Windows Pro/Enterprise and an elevated shell (or Hyper-V Administrators membership)."""
+"""Hyper-V backend. Requires Windows Pro/Enterprise and an elevated shell (or Hyper-V Administrators membership).
+
+No traffic capture: Hyper-V has no per-VM pcap equivalent to VirtualBox's NIC trace, so `capture` is ignored."""
 import functools
 import subprocess
+from pathlib import Path
 
 from .. import config
 from .base import Sandbox
@@ -17,7 +20,7 @@ class HyperVSandbox(Sandbox):
         proc = self._ps(f"Get-VMSnapshot -VMName '{config.VM_NAME}' -Name '{config.VM_SNAPSHOT}' "
                         "-ErrorAction Stop | Out-Null", check=False)
         return proc.returncode == 0
-    def restore(self) -> None:
+    def restore(self, capture: Path | None = None) -> None:
         self.poweroff()
         self._ps(f"Restore-VMSnapshot -VMName '{config.VM_NAME}' -Name '{config.VM_SNAPSHOT}' -Confirm:$false")
         self._ps(f"Start-VM -Name '{config.VM_NAME}'")

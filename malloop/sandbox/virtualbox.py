@@ -19,9 +19,13 @@ class VirtualBoxSandbox(Sandbox):
         proc = self._vbox("snapshot", config.VM_NAME, "list", "--machinereadable", check=False)
         return proc.returncode == 0 and f'="{config.VM_SNAPSHOT}"' in proc.stdout
 
-    def restore(self) -> None:
+    def restore(self, capture: Path | None = None) -> None:
         self.poweroff()
         self._vbox("snapshot", config.VM_NAME, "restore", config.VM_SNAPSHOT)
+        if capture is not None:
+            # Enabled while the restored VM is still in its saved state. Toggling the trace on a running VM
+            # re-plumbs the NIC, which drops the guest's link for a few seconds and breaks agent requests.
+            self._vbox("modifyvm", config.VM_NAME, "--nic-trace1", "on", "--nic-trace-file1", str(capture.resolve()))
         self._vbox("startvm", config.VM_NAME, "--type", "headless")
 
     def poweroff(self) -> None:
@@ -29,3 +33,5 @@ class VirtualBoxSandbox(Sandbox):
         if 'VMState="running"' in state or 'VMState="paused"' in state:
             self._vbox("controlvm", config.VM_NAME, "poweroff", check=False)
             time.sleep(2)
+        # So a later manual boot can't write over the finished run's capture.
+        self._vbox("modifyvm", config.VM_NAME, "--nic-trace1", "off", check=False)

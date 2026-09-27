@@ -65,6 +65,23 @@ stage/iteration until it finishes. Everything rendered is sample-derived and unt
 HTML-escaped the same way the `<untrusted>` wrapper protects the model; don't bind it beyond
 loopback without adding auth in front of it.
 
+## Network capture
+
+On VirtualBox, every detonation records the guest NIC to `runs/<id>/artifacts/dynamicN.pcap` (VirtualBox's
+NIC trace, enabled while the restored VM is still in its saved state). After power-off the host parses it
+with a bounded stdlib reader (`malloop/pcap.py`) into a `pcap` summary for the agent: DNS names asked,
+which resolvers were asked, and TCP/UDP connection attempts. The guest agent's own traffic is filtered out.
+The capture is independent of Sysmon, which misses a lot of network activity.
+
+With `network="simulated"`, the host also runs a fake DNS (`malloop/fakedns.py`) on `192.168.56.1:53`
+for the length of the run. It answers every A query with a per-domain sinkhole address in `192.0.2.0/24`
+(TEST-NET-1), so the sample goes on to connect and its C2 ports show up in the capture. Hyper-V has no
+equivalent trace, so it doesn't capture.
+
+The guest's default gateway is the host, so **isolation depends on the host not forwarding**. Never enable
+IP routing or Internet Connection Sharing on the host-only adapter. Check with
+`Get-NetIPInterface -AddressFamily IPv4 | Where-Object Forwarding -eq Enabled`, which should print nothing.
+
 ## Recursive unpacking
 
 Containers are unpacked recursively before triage. Every extracted file becomes a node in a tree
@@ -208,6 +225,25 @@ surfaced most of the gotchas below, so it's documented in full.
    Guest Additions already installed there is no way to configure a static IP from the host side
    afterward. Confirm it worked (`bootstrap_done.txt` exists, `Get-NetIPAddress` shows the static
    address in `Preferred` state) before moving on.
+
+   It also needs these guest settings, which the first build missed:
+   ```powershell
+   # VirtualBox passes the host laptop's battery into the guest. Task Scheduler's defaults then refuse to
+   # start the agent (it sits "Queued") or stop it, and every restore fails its health check on battery.
+   Set-ScheduledTask MalloopGuestAgent -Settings (New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+       -DontStopIfGoingOnBatteries -ExecutionTimeLimit 0 -RestartCount 3 `
+       -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable)
+   foreach ($t in "monitor", "standby", "hibernate") { powercfg -change "-$t-timeout-ac" 0; powercfg -change "-$t-timeout-dc" 0 }
+   # Gateway and DNS -> the host, so off-subnet traffic reaches the wire (and the capture and fake DNS).
+   $if = (Get-NetIPAddress -IPAddress 192.168.56.10).InterfaceIndex
+   New-NetRoute -InterfaceIndex $if -DestinationPrefix 0.0.0.0/0 -NextHop 192.168.56.1
+   Set-DnsClientServerAddress -InterfaceIndex $if -ServerAddresses 192.168.56.1
+   # Quiet the idle guest: connectivity probes and NTP were ~55 DNS queries per 100s of capture noise.
+   New-Item HKLM:\SOFTWARE\Policies\Microsoft\Windows\NetworkConnectivityStatusIndicator -Force |
+       Set-ItemProperty -Name NoActiveProbe -Type DWord -Value 1
+   Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\NlaSvc\Parameters\Internet EnableActiveProbing 0
+   Set-Service W32Time -StartupType Disabled   # Guest Additions keep the clock in sync
+   ```
 4. Shut the guest down cleanly, then from the host switch the network:
    ```bash
    VBoxManage controlvm malloop-win10 poweroff
@@ -221,7 +257,14 @@ surfaced most of the gotchas below, so it's documented in full.
    mouse clicks into the VM's console window land at the wrong coordinates** — keyboard input reaches
    the guest fine, but absolute-position mouse clicks don't map correctly until Guest Additions
    provides real pointer integration. Do this before you need to click anything by hand.
-6. Shut down cleanly, then `VBoxManage snapshot malloop-win10 take clean`.
+6. Disable the shared clipboard and drag-and-drop, then snapshot. Restoring a snapshot also restores
+   these settings, so they have to be off when `clean` is taken:
+   ```bash
+   VBoxManage controlvm malloop-win10 clipboard mode disabled
+   VBoxManage controlvm malloop-win10 draganddrop disabled
+   VBoxManage snapshot malloop-win10 take clean
+   ```
+   Keep NIC trace off in the snapshot; malloop turns it on per run.
 7. On the host, set `MALLOOP_GUEST_TOKEN=<secret>` to match what `bootstrap.ps1` used.
 
 Every `run_dynamic` call restores `clean`, detonates, collects data and hard powers off the VM.
@@ -270,7 +313,8 @@ The worker is stateless: each request writes the upload to a temp file, runs the
 `MALLOOP_MODEL`, `MALLOOP_MAX_ITERATIONS`, `MALLOOP_MAX_DYNAMIC_SECONDS`, `MALLOOP_MAX_INITIAL_EVIDENCE_CHARS`,
 `MALLOOP_SANDBOX`, `MALLOOP_VM_NAME`, `MALLOOP_VM_SNAPSHOT`, `MALLOOP_GUEST_URL`, `MALLOOP_GUEST_TOKEN`,
 `MALLOOP_STATIC_WORKER_URL`, `MALLOOP_STATIC_WORKER_TOKEN`, `MALLOOP_STATIC_WORKER_TIMEOUT`,
-`MALLOOP_VIEWER_HOST`, `MALLOOP_VIEWER_PORT`,
+`MALLOOP_VIEWER_HOST`, `MALLOOP_VIEWER_PORT`, `MALLOOP_PCAP_MAX_BYTES`, `MALLOOP_PCAP_MAX_PACKETS`,
+`MALLOOP_FAKEDNS_BIND`, `MALLOOP_FAKEDNS_PORT`,
 `GHIDRA_HEADLESS`, `CAPA_BIN`, `FLOSS_BIN`, `SEVEN_ZIP`, `VBOXMANAGE`, `MALLOOP_UNPACK_*`. See `malloop/config.py`.
 
 ## Safety notes
@@ -283,7 +327,6 @@ The worker is stateless: each request writes the upload to a temp file, runs the
 
 - More unpackers: MSI, PKG (xar), installers (NSIS/Inno), UPX
 - macOS and Linux guests (ESF / eBPF telemetry)
-- PCAP capture on the host-only adapter
 - Config extractors (e.g. CAPE's) exposed as an `extract_config` tool
 - Replay mode: re-run a `trace.jsonl` without the model
 

@@ -10,6 +10,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 import requests
+from test_pcap import build_pcap, dns_frame
 
 from malloop import config
 from malloop.guest import guest_agent
@@ -21,11 +22,17 @@ SAMPLE_BYTES = b"MZ\r\n\r\n--not-the-boundary\r\n\x00\xff" * 50 + b"\r\n"
 
 
 class RecordingVM(Sandbox):
+    """Stands in for a backend that captures: 'records' a pcap the way VirtualBox's NIC trace would."""
+
     def __init__(self):
         self.events = []
+        self.capture = None
 
-    def restore(self):
+    def restore(self, capture=None):
         self.events.append("restore")
+        self.capture = capture
+        if capture is not None:
+            capture.write_bytes(build_pcap([dns_frame("beacon.example.xyz")]))
 
     def poweroff(self):
         self.events.append("poweroff")
@@ -55,6 +62,9 @@ def guest(tmp_path, monkeypatch):
     url = f"http://127.0.0.1:{server.server_address[1]}"
     monkeypatch.setattr(config, "GUEST_URL", url)
     monkeypatch.setattr(config, "GUEST_TOKEN", TOKEN)
+    # Never bind the real host-only interface from a test.
+    monkeypatch.setattr(config, "FAKEDNS_BIND", "127.0.0.1")
+    monkeypatch.setattr(config, "FAKEDNS_PORT", 0)
     yield {"url": url, "port": server.server_address[1], "seen": seen, "work": work}
     server.shutdown()
     server.server_close()
@@ -77,6 +87,35 @@ def test_detonate_roundtrip(guest, tmp_path):
     assert report["sysmon_events"][0]["QueryName"] == "evil.example.xyz"
     assert (out / "sysmon.json").read_text().startswith("[{")
     assert (out / "screen.png").read_bytes() == b"\x89PNG fake"
+    # traffic captured by the backend is summarized, and `simulated` ran the fake DNS for the run
+    assert vm.capture == tmp_path / "collected.pcap"
+    assert report["pcap"]["dns_queries"] == [{"name": "beacon.example.xyz", "count": 1}]
+    assert report["fake_dns"]["listening"].startswith("127.0.0.1:")
+
+
+def test_no_fake_dns_without_simulated_network(guest, tmp_path):
+    sample = tmp_path / "x.exe"
+    sample.write_bytes(b"MZ")
+    (tmp_path / "out").mkdir()
+    report = RecordingVM().detonate(sample, 15, [], "none", tmp_path / "out")
+    assert "fake_dns" not in report and "pcap" in report
+
+
+def test_guest_artifact_cannot_overwrite_host_capture(guest, tmp_path, monkeypatch):
+    """Artifact names come from the guest. One named like the capture must land inside out_dir, never on it."""
+    def run_sample(duration, args, network, dump=False):
+        guest_agent.OUT_DIR.mkdir(parents=True, exist_ok=True)
+        (guest_agent.OUT_DIR / "out.pcap").write_bytes(b"forged by the sample")
+        return {"artifacts": ["out.pcap", "../out.pcap"]}
+
+    monkeypatch.setattr(guest_agent, "run_sample", run_sample)
+    sample = tmp_path / "x.exe"
+    sample.write_bytes(b"MZ")
+    (tmp_path / "out").mkdir()
+    report = RecordingVM().detonate(sample, 15, [], "none", tmp_path / "out")
+    assert (tmp_path / "out.pcap").read_bytes().startswith(b"\xd4\xc3\xb2\xa1")
+    assert report["pcap"]["dns_queries"] == [{"name": "beacon.example.xyz", "count": 1}]
+    assert (tmp_path / "out" / "out.pcap").read_bytes() == b"forged by the sample"
 
 
 def test_vm_powered_off_even_when_guest_fails(guest, tmp_path, monkeypatch):
@@ -86,9 +125,10 @@ def test_vm_powered_off_even_when_guest_fails(guest, tmp_path, monkeypatch):
     monkeypatch.setattr(guest_agent, "run_sample", boom)
     sample = tmp_path / "x.exe"
     sample.write_bytes(b"MZ")
+    (tmp_path / "out").mkdir()
     vm = RecordingVM()
     with pytest.raises(requests.RequestException):
-        vm.detonate(sample, 15, [], "none", tmp_path)
+        vm.detonate(sample, 15, [], "simulated", tmp_path / "out")
     assert vm.events == ["restore", "poweroff"]
 
 

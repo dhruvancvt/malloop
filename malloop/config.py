@@ -52,3 +52,10 @@ VM_SNAPSHOT = _env("MALLOOP_VM_SNAPSHOT", "clean")
 GUEST_URL = _env("MALLOOP_GUEST_URL", "http://192.168.56.10:8765")
 GUEST_TOKEN = _env("MALLOOP_GUEST_TOKEN", "change-me")
 VBOXMANAGE = _env("VBOXMANAGE", r"C:\Program Files\Oracle\VirtualBox\VBoxManage.exe")
+
+# Traffic capture during detonation (VirtualBox NIC trace), parsed on the host with these bounds.
+PCAP_MAX_BYTES = int(_env("MALLOOP_PCAP_MAX_BYTES", str(64 * 1024**2)))
+PCAP_MAX_PACKETS = int(_env("MALLOOP_PCAP_MAX_PACKETS", "200000"))
+# Host-only address the fake DNS listens on during `simulated` runs. Blank disables it. Never a wildcard address.
+FAKEDNS_BIND = _env("MALLOOP_FAKEDNS_BIND", "192.168.56.1")
+FAKEDNS_PORT = int(_env("MALLOOP_FAKEDNS_PORT", "53"))

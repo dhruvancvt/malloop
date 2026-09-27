@@ -1,11 +1,20 @@
 """Sandbox backend interface. A backend controls the VM lifecycle; the guest agent does the in-VM work."""
+import contextlib
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
 from .. import config
+from ..fakedns import FakeDNS
+from ..pcap import summarize as summarize_pcap
+
+
+def _guest_endpoint() -> tuple[str, int] | None:
+    parts = urlsplit(config.GUEST_URL)
+    return (parts.hostname, parts.port) if parts.hostname and parts.port else None
 
 
 class Sandbox(ABC):
@@ -15,8 +24,9 @@ class Sandbox(ABC):
         return True
 
     @abstractmethod
-    def restore(self) -> None:
-        """Revert the VM to the clean snapshot and power it on."""
+    def restore(self, capture: Path | None = None) -> None:
+        """Revert the VM to the clean snapshot and power it on. If `capture` is given and the backend can,
+        record the guest's network traffic to that pcap file until power-off."""
 
     @abstractmethod
     def poweroff(self) -> None:
@@ -41,23 +51,34 @@ class Sandbox(ABC):
 
     def detonate(self, sample: Path, duration: int, args: list[str], network: str, out_dir: Path,
                  dump: bool = False) -> dict:
-        """Restore -> upload -> run -> collect -> power off. Returns the guest's telemetry report."""
-        self.restore()
+        """Restore -> upload -> run -> collect -> power off. Returns the guest's telemetry report, plus a
+        summary of the captured traffic and, for `simulated` runs, of what the fake DNS was asked."""
+        # Kept beside out_dir, not in it: artifact names come from the guest, so a sample could otherwise
+        # drop a file with the same name and have it overwrite the host's own capture.
+        pcap_path = out_dir.with_suffix(".pcap")
+        dns = FakeDNS(config.FAKEDNS_BIND, config.FAKEDNS_PORT) if network == "simulated" else None
+        self.restore(capture=pcap_path)
         try:
             self.wait_for_guest()
             with sample.open("rb") as f:
                 self._guest("POST", "/sample", files={"file": (sample.name, f)}).raise_for_status()
-            resp = self._guest("POST", "/run", json={"duration": duration, "args": args, "network": network, "dump": dump},
-                               timeout=duration + 120)
+            with dns or contextlib.nullcontext():
+                resp = self._guest("POST", "/run", json={"duration": duration, "args": args, "network": network,
+                                                         "dump": dump}, timeout=duration + 120)
             resp.raise_for_status()
             report = resp.json()
             for name in report.get("artifacts", []):
                 blob = self._guest("GET", f"/artifact/{name}", timeout=120)
                 if blob.ok:
                     (out_dir / Path(name).name).write_bytes(blob.content)
-            return report
         finally:
             self.poweroff()
+        if pcap_path.exists():
+            report["pcap"] = summarize_pcap(pcap_path, _guest_endpoint(), config.PCAP_MAX_BYTES,
+                                            config.PCAP_MAX_PACKETS)
+        if dns is not None:
+            report["fake_dns"] = dns.summary()
+        return report
 
 
 class NoSandbox(Sandbox):
@@ -67,7 +88,7 @@ class NoSandbox(Sandbox):
     def available(self) -> bool:
         return False
 
-    def restore(self) -> None:
+    def restore(self, capture: Path | None = None) -> None:
         raise RuntimeError("no sandbox configured (set MALLOOP_SANDBOX)")
 
     def poweroff(self) -> None:

@@ -69,7 +69,7 @@ class FakeSandbox(Sandbox):
     def __init__(self):
         self.calls = []
 
-    def restore(self):
+    def restore(self, capture=None):
         pass
 
     def poweroff(self):
@@ -357,3 +357,21 @@ def test_read_file_text_hex_and_bounds(tmp_path):
     assert r["encoding"] == "hex" and r["returned_bytes"] == 1024
     assert r["content"].splitlines()[0].startswith("00000010  10 11 12 13")
     assert "read_file" in {t["name"] for t in TOOLS}
+
+
+def test_capture_reaches_the_model_and_flags_a_silent_fake_dns():
+    from malloop.tools import summarize_dynamic
+
+    base = {"sysmon_events": [], "artifacts": []}
+    pcap = {"dns_queries": [{"name": "c2.example", "count": 2}], "dns_servers_asked": {config.FAKEDNS_BIND: 2}}
+    silent = summarize_dynamic({**base, "pcap": pcap, "fake_dns": {"listening": "x", "queries": []}})
+    assert silent["pcap"] == pcap and "firewall" in silent["fake_dns_note"]
+
+    answered = {"listening": "x", "queries": [{"name": "c2.example", "type": "A", "answer": "192.0.2.9", "count": 2}]}
+    assert "fake_dns_note" not in summarize_dynamic({**base, "pcap": pcap, "fake_dns": answered})
+
+    # a hardcoded resolver never reaches the fake DNS by design: not a firewall problem
+    elsewhere = {**pcap, "dns_servers_asked": {"8.8.8.8": 2}}
+    assert "fake_dns_note" not in summarize_dynamic({**base, "pcap": elsewhere, "fake_dns": {"queries": []}})
+
+    assert "pcap" not in summarize_dynamic(base) and "fake_dns" not in summarize_dynamic(base)

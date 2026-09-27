@@ -82,8 +82,11 @@ TOOLS = [
         "name": "run_dynamic",
         "description": (
             "Detonate the sample in a fresh snapshot of the isolated analysis VM and collect Sysmon, process, file, "
-            "registry and network telemetry. Expensive: consumes the dynamic time budget. network='none' blocks all "
-            "traffic; 'simulated' answers DNS/HTTP with fake services (FakeNet). Real internet is never available."
+            "registry and network telemetry, plus a `pcap` summary of the guest's traffic captured on the host. "
+            "Expensive: consumes the dynamic time budget. network='none': nothing answers, so name lookups fail and "
+            "only hardcoded-IP connection attempts appear. 'simulated': every DNS name resolves to a sinkhole address "
+            "in 192.0.2.0/24, so the sample goes on to connect and its targets and ports show up in the pcap "
+            "(connections never complete). Real internet is never available."
         ),
         "input_schema": {
             "type": "object",
@@ -158,7 +161,18 @@ def summarize_dynamic(report: dict) -> dict:
         "network": sorted({f'{e.get("DestinationIp")}:{e.get("DestinationPort")}' for e in ev if e["id"] == 3})[:40],
         "remote_threads_or_access": [f'{e.get("Image")} -> {e.get("TargetImage")}' for e in ev if e["id"] in (8, 10)][:30],
         "artifacts": report.get("artifacts", []),
+        **_network_capture(report),
     }
+
+
+def _network_capture(report: dict) -> dict:
+    out = {k: report[k] for k in ("pcap", "fake_dns") if k in report}
+    sent_to_us = (report.get("pcap") or {}).get("dns_servers_asked", {}).get(config.FAKEDNS_BIND)
+    answered = (report.get("fake_dns") or {}).get("queries")
+    if sent_to_us and answered == []:
+        out["fake_dns_note"] = ("The capture shows DNS queries but the fake DNS answered none of them. The host "
+                                "firewall is probably dropping inbound UDP 53 on the host-only adapter.")
+    return out
 
 
 def compact_tree(nodes: list[dict], node_triage: dict[str, dict]) -> list[dict]:

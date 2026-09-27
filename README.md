@@ -28,6 +28,8 @@ budgeted and logged to `runs/<id>/trace.jsonl`.
 | `malloop/agent.py` | Claude tool-use loop with iteration and dynamic-time budgets |
 | `malloop/sandbox/` | VM lifecycle backends (VirtualBox, Hyper-V) |
 | `malloop/guest/guest_agent.py` | Runs inside the analysis VM: receives the sample, detonates it, returns Sysmon telemetry |
+| `malloop/evidence.py` | Per-run evidence store: `trace.jsonl`, `status.json`, saved stage reports |
+| `malloop/viewer.py` | Read-only web UI for `runs/<id>/`, with live progress on runs still in flight |
 
 ## Quick start (static only)
 
@@ -37,9 +39,9 @@ pip install -r requirements.txt
 python -m malloop analyze path/to/file --static-only
 ```
 
-Add capa, FLOSS and Ghidra (`set GHIDRA_HEADLESS=C:\ghidra\support\analyzeHeadless.bat`) to get the full static stage.
-Missing tools are skipped, not fatal. Instead of installing capa and FLOSS on the host, you can run them in an
-isolated Linux VM — see [Static worker](#static-worker-capa--floss-in-remnux).
+Add capa, FLOSS and Ghidra to get the full static stage — see [Installing Ghidra](#installing-ghidra) below,
+Ghidra needs more than just the env var. Missing tools are skipped, not fatal. Instead of installing capa and
+FLOSS on the host, you can run them in an isolated Linux VM — see [Static worker](#static-worker-capa--floss-in-remnux).
 
 ## Full loop
 
@@ -47,6 +49,21 @@ isolated Linux VM — see [Static worker](#static-worker-capa--floss-in-remnux).
 set ANTHROPIC_API_KEY=...
 python -m malloop analyze path/to/sample.exe
 ```
+
+## Web viewer
+
+A read-only local web UI for `runs/<id>/` reports, including live progress on a run still in flight:
+
+```bash
+python -m malloop viewer
+```
+
+Serves on `http://127.0.0.1:8787` by default (`MALLOOP_VIEWER_HOST`/`MALLOOP_VIEWER_PORT`). The index
+lists past runs; a run's page shows the verdict, evidence, triage, static analysis and the full agent
+trace, and — while a run is still in progress — polls for new trace entries and the current
+stage/iteration until it finishes. Everything rendered is sample-derived and untrusted, so it's all
+HTML-escaped the same way the `<untrusted>` wrapper protects the model; don't bind it beyond
+loopback without adding auth in front of it.
 
 ## Recursive unpacking
 
@@ -73,6 +90,51 @@ Without 7-Zip, DMGs lose filenames and non-Mach-O files, and LZFSE-compressed DM
 winget install 7zip.7zip
 ```
 
+## Installing Ghidra
+
+Ghidra needs two things that a bare `GHIDRA_HEADLESS` env var doesn't fix by itself, and getting
+them wrong doesn't raise a clear error — it either silently records `{"skipped": ...}` for the
+`ghidra` section of every static report, or (if `GHIDRA_HEADLESS` points at a real
+`analyzeHeadless.bat` but the second thing below is missing) fails per-file with a real but
+easy-to-miss error:
+
+1. **A JDK 21 on `JAVA_HOME` or `PATH`.** Ghidra 11+ requires exactly this; older/newer JDKs won't
+   do. [Temurin](https://adoptium.net/temurin/releases/?version=21) is a good source.
+2. **The Jython extension, installed separately.** As of Ghidra 12.x, Jython was split out of the
+   base distribution — `ghidra_scripts/` in this repo are Jython 2.7 (see `AGENTS.md`), so without
+   this step every `analyzeHeadless` call fails with:
+   `JythonStubException: ... you must install the Jython Ghidra Extension`.
+   The extension ships *inside* the Ghidra download itself, so no separate download is needed:
+   extract `<ghidra_install_dir>/Extensions/Ghidra/ghidra_<version>_Jython.zip` into
+   `<ghidra_install_dir>/Ghidra/Extensions/`, so you end up with a
+   `<ghidra_install_dir>/Ghidra/Extensions/Jython/` folder.
+
+Steps:
+
+```bash
+# 1. JDK 21 (or use your OS's package manager)
+# download + extract a Temurin 21 build, then:
+setx JAVA_HOME "C:\tools\jdk-21.x.x.x+x"
+
+# 2. Ghidra itself — verify the SHA-256 on the release page before extracting
+# https://github.com/NationalSecurityAgency/ghidra/releases
+# extract to e.g. C:\tools\ghidra_<version>_PUBLIC
+
+# 3. the Jython extension bundled inside the Ghidra download (see above)
+# extract Extensions/Ghidra/ghidra_<version>_Jython.zip into Ghidra/Extensions/
+
+setx GHIDRA_HEADLESS "C:\tools\ghidra_<version>_PUBLIC\support\analyzeHeadless.bat"
+```
+
+Verify with a static-only run against a benign binary:
+
+```bash
+python -m malloop analyze C:\Windows\System32\notepad.exe --static-only
+```
+
+The printed `ghidra` section should have `language`/`compiler`/`function_count`/`imports`/
+`suspicious_functions`/`top_decompiled` keys — not `{"skipped": ...}` and not a Jython error.
+
 ## Tests
 
 ```bash
@@ -98,21 +160,87 @@ Ghidra and capa output is compacted instead of cut off (`MALLOOP_MAX_INITIAL_EVI
 **Windows 10 Home has no Hyper-V**, so use VirtualBox (`MALLOOP_SANDBOX=virtualbox`, the default).
 Use `hyperv` only on Pro/Enterprise.
 
-1. Create a Windows 10/11 VM named `malloop-win10`.
-2. **Networking:** one adapter, **Host-only** (`192.168.56.0/24`), with the guest at `192.168.56.10`.
-   No NAT and no bridged adapter. The VM must not be able to reach your LAN or the internet.
-3. In the guest:
-   - Disable Defender real-time protection and auto-updates (otherwise it deletes samples).
-   - Install Python 3.11+, [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) with a verbose config,
-     and optionally Procmon, ProcDump and FakeNet-NG (all on PATH).
-   - Copy `malloop/guest/guest_agent.py` to `C:\malloop\` and add a startup task:
-     `python C:\malloop\guest_agent.py --token <secret>`
-   - Allow inbound TCP 8765 on the host-only interface in the guest firewall.
-   - Disable shared folders, clipboard and drag-and-drop.
-4. Shut down cleanly, then take a snapshot named `clean`.
-5. On the host, set `MALLOOP_GUEST_TOKEN=<secret>`.
+You can click through a normal Windows install, or drive it unattended with an `autounattend.xml`.
+The unattended route is what actually built and proved out the current `malloop-win10` VM, and it
+surfaced most of the gotchas below, so it's documented in full.
+
+### Getting a Windows image
+
+- **Enterprise evaluation editions require signing into a Microsoft account during setup.** That
+  rules them out for an unattended, account-less build — skip straight to Server editions.
+- **Windows Server evaluation editions** (Standard or Datacenter) use a local Administrator password
+  instead, but **must reach the internet to activate within 10 days of install**, which is in direct
+  tension with keeping the guest permanently offline. The fix used here: do every internet-dependent
+  step (installing Python, Sysmon, the guest agent) *while the VM still has NAT*, and only switch to
+  the isolated host-only network as the very last step, after everything the guest needs is already
+  on disk — the same order the REMnux worker VM was hardened in.
+- Pick the **Desktop Experience** image index, not Server Core — `guest_agent.py`'s screenshot
+  capture needs an interactive desktop session to exist.
+
+### Unattended install
+
+1. Create the VM with **EFI firmware** and **NAT** networking for now (switched to host-only in step 4):
+   ```bash
+   VBoxManage createvm --name malloop-win10 --ostype Windows2025_64 --register
+   VBoxManage modifyvm malloop-win10 --memory 4096 --cpus 2 --firmware efi --nic1 nat
+   ```
+   **UEFI needs the standard multi-partition layout (EFI System Partition + MSR + primary), not a
+   single NTFS partition spanning the disk.** An `autounattend.xml` `DiskConfiguration` that only
+   defines one partition fails partway through setup with *"There is an error selecting this
+   partition for install. Please select a different partition or refresh selections."* — even though
+   the partition it created matches the answer file exactly. Point the disk config at unallocated
+   space and let Setup create the standard four-partition scheme itself, rather than defining a
+   single partition by hand.
+2. Attach the Windows ISO, plus a second small ISO containing `autounattend.xml`,
+   `malloop/guest/guest_agent.py`, and a `bootstrap.ps1` first-logon script. Windows Setup scans the
+   root of *every* attached optical drive for `autounattend.xml`, not just floppy/USB media, so a
+   second virtual DVD works fine. Building that small ISO with PowerShell's built-in `IMAPI2FS` COM
+   object is unreliable — neither `IStream.Read` nor `ADODB.Stream.LoadFromStream` marshal correctly
+   called this way from PowerShell. [`pycdlib`](https://pypi.org/project/pycdlib/) (`pip install
+   pycdlib`, pure Python, no native deps) builds the same ISO in a few lines and just works.
+3. `bootstrap.ps1`, invoked via `autounattend.xml`'s `FirstLogonCommands`, does all the
+   internet-dependent setup while NAT is still attached: install Python 3.11+, install
+   [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) with a verbose config (e.g.
+   SwiftOnSecurity's), copy `guest_agent.py` to `C:\malloop\`, register it as a SYSTEM-level scheduled
+   task triggered `AtStartup`, and open the firewall for inbound TCP 8765. **As its last action**, it
+   also sets the guest's own static IP (`192.168.56.10/24`, DHCP disabled) — this has to happen here,
+   before the network is switched, because **the host-only adapter has DHCP disabled**, and without
+   Guest Additions already installed there is no way to configure a static IP from the host side
+   afterward. Confirm it worked (`bootstrap_done.txt` exists, `Get-NetIPAddress` shows the static
+   address in `Preferred` state) before moving on.
+4. Shut the guest down cleanly, then from the host switch the network:
+   ```bash
+   VBoxManage controlvm malloop-win10 poweroff
+   VBoxManage modifyvm malloop-win10 --nic1 hostonly --hostonlyadapter1 "VirtualBox Host-Only Ethernet Adapter"
+   VBoxManage startvm malloop-win10 --type headless
+   ```
+   Then confirm the guest agent answers on the isolated network:
+   `curl -H "X-Malloop-Token: <secret>" http://192.168.56.10:8765/health`.
+5. Install **VirtualBox Guest Additions** (`Devices > Insert Guest Additions CD image`, then run
+   `D:\VBoxWindowsAdditions.exe /S` as Administrator inside the guest, then reboot). **Without this,
+   mouse clicks into the VM's console window land at the wrong coordinates** — keyboard input reaches
+   the guest fine, but absolute-position mouse clicks don't map correctly until Guest Additions
+   provides real pointer integration. Do this before you need to click anything by hand.
+6. Shut down cleanly, then `VBoxManage snapshot malloop-win10 take clean`.
+7. On the host, set `MALLOOP_GUEST_TOKEN=<secret>` to match what `bootstrap.ps1` used.
 
 Every `run_dynamic` call restores `clean`, detonates, collects data and hard powers off the VM.
+
+### A dangerous VirtualBox input gotcha
+
+If you ever drive the VM's console window directly instead of over the guest agent's HTTP API:
+**VirtualBox's keyboard/mouse capture silently drops** every time you click one of VirtualBox's own
+menus (`Devices`, `Machine`, ...), and after every guest reboot. If a system-level key combo like
+`Win+R` is sent while capture is inactive, **it goes to your real host desktop, not the guest** — this
+is exactly how a stray `Win+R` opened a Run dialog on the host machine mid-build here. Always click
+"Capture" on VirtualBox's own re-capture prompt (safe to click — it's host-native chrome, not guest
+content) immediately before sending the next round of guest-bound input, and assume every reboot has
+reset the capture state.
+
+A smaller side effect of the same root cause: Windows Server's Start-menu shutdown flow shows a
+"Shutdown Event Tracker" reason dialog that needs an extra click to confirm before the VM actually
+powers off — scripting a clean shutdown from the host (`shutdown /s /t 0` inside the guest, or ACPI)
+skips it.
 
 ## Static worker: capa + FLOSS in REMnux
 
@@ -142,6 +270,7 @@ The worker is stateless: each request writes the upload to a temp file, runs the
 `MALLOOP_MODEL`, `MALLOOP_MAX_ITERATIONS`, `MALLOOP_MAX_DYNAMIC_SECONDS`, `MALLOOP_MAX_INITIAL_EVIDENCE_CHARS`,
 `MALLOOP_SANDBOX`, `MALLOOP_VM_NAME`, `MALLOOP_VM_SNAPSHOT`, `MALLOOP_GUEST_URL`, `MALLOOP_GUEST_TOKEN`,
 `MALLOOP_STATIC_WORKER_URL`, `MALLOOP_STATIC_WORKER_TOKEN`, `MALLOOP_STATIC_WORKER_TIMEOUT`,
+`MALLOOP_VIEWER_HOST`, `MALLOOP_VIEWER_PORT`,
 `GHIDRA_HEADLESS`, `CAPA_BIN`, `FLOSS_BIN`, `SEVEN_ZIP`, `VBOXMANAGE`, `MALLOOP_UNPACK_*`. See `malloop/config.py`.
 
 ## Safety notes

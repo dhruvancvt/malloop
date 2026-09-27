@@ -179,13 +179,21 @@ def test_full_loop_end_to_end(workspace, monkeypatch, capsys):
     # --- artifacts on disk
     run_dir = report.parent
     trace = [json.loads(line) for line in (run_dir / "trace.jsonl").read_text().splitlines()]
-    assert [t["tool"] for t in trace][:3] == ["search_strings", "list_extracted", "switch_target"]
-    assert trace[-1]["tool"] == "finish"
+    tool_calls = [t for t in trace if t["type"] == "tool_call"]
+    assert [t["tool"] for t in tool_calls][:3] == ["search_strings", "list_extracted", "switch_target"]
+    assert tool_calls[-1]["tool"] == "finish"
+    # The agent's reasoning text is persisted too (previously print-only), for a live viewer to show.
+    text_entries = [t for t in trace if t["type"] == "text"]
+    assert text_entries[0]["text"] == "Looking for C2 strings first."
+    assert trace[-1]["type"] == "tool_call" and trace[-1]["tool"] == "finish"
     assert (run_dir / "dynamic1_raw.json").exists()
     assert (run_dir / "artifacts" / "dynamic1" / "sysmon.json").exists()
+    status = json.loads((run_dir / "status.json").read_text())
+    assert status["stage"] == "done"
     md = report.read_text(encoding="utf-8")
     assert "**malicious**" in md and "T1547.001" in md and "`evil.example.xyz`" in md
     assert "## Container contents" in md and "`run_dynamic`" in md
+    assert "[agent] Looking for C2 strings first." in md
     assert "[agent] Looking for C2 strings first." in capsys.readouterr().out
 
 
@@ -200,8 +208,12 @@ def test_iteration_budget_forces_inconclusive(workspace, monkeypatch):
     assert "**inconclusive**" in report.read_text(encoding="utf-8")
 
 
+def fake_run():
+    return SimpleNamespace(set_status=lambda *a, **k: None, log_text=lambda *a, **k: None)
+
+
 def test_text_only_reply_gets_nudged():
-    executor = SimpleNamespace(final=None, execute=lambda n, p: {})
+    executor = SimpleNamespace(final=None, execute=lambda n, p: {}, run=fake_run())
 
     def finish(m):
         executor.final = {"verdict": "benign", "confidence": 0.5, "summary": "s", "evidence": []}
@@ -249,7 +261,7 @@ def test_brief_keeps_every_section_under_budget():
 
 def test_agent_sees_every_section_of_large_evidence():
     """Regression: the initial evidence used to be blindly cut at 12k chars, dropping static analysis."""
-    executor = SimpleNamespace(final=None, execute=lambda n, p: {})
+    executor = SimpleNamespace(final=None, execute=lambda n, p: {}, run=fake_run())
 
     def finish(m):
         executor.final = {"verdict": "benign", "confidence": 0.1, "summary": "s", "evidence": []}

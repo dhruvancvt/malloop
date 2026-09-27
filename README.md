@@ -243,6 +243,8 @@ surfaced most of the gotchas below, so it's documented in full.
        Set-ItemProperty -Name NoActiveProbe -Type DWord -Value 1
    Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\NlaSvc\Parameters\Internet EnableActiveProbing 0
    Set-Service W32Time -StartupType Disabled   # Guest Additions keep the clock in sync
+   # Defender quarantines samples before they run. On Server it's a removable feature; reboot afterwards.
+   Uninstall-WindowsFeature Windows-Defender
    ```
 4. Shut the guest down cleanly, then from the host switch the network:
    ```bash

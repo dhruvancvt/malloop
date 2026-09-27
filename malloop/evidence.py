@@ -25,7 +25,18 @@ class Run:
         return path
 
     def log_action(self, tool: str, params: dict, result: dict) -> None:
-        entry = {"n": len(self.actions) + 1, "ts": time.time(), "tool": tool, "params": params, "result": result}
+        self._log_entry({"type": "tool_call", "tool": tool, "params": params, "result": result})
+
+    def log_text(self, text: str) -> None:
+        """Persist the agent's free-text reasoning, so a live viewer can show it (previously print-only)."""
+        self._log_entry({"type": "text", "text": text})
+
+    def _log_entry(self, fields: dict) -> None:
+        entry = {"n": len(self.actions) + 1, "ts": time.time(), **fields}
         self.actions.append(entry)
         with (self.run_dir / "trace.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, default=str) + "\n")
+
+    def set_status(self, stage: str, **extra) -> None:
+        """Overwrite status.json with the current pipeline stage, for a live viewer to poll."""
+        self.save("status", {"stage": stage, "ts": time.time(), **extra})

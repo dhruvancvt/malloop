@@ -57,6 +57,7 @@ def run_agent(initial_evidence: dict, executor: ToolExecutor, log=print, client=
     }]
 
     for i in range(1, config.MAX_ITERATIONS + 1):
+        executor.run.set_status("agent", iteration=i, max_iterations=config.MAX_ITERATIONS)
         resp = client.messages.create(
             model=config.MODEL,
             max_tokens=8000,
@@ -69,6 +70,7 @@ def run_agent(initial_evidence: dict, executor: ToolExecutor, log=print, client=
         for block in resp.content:
             if block.type == "text" and block.text.strip():
                 log(f"[agent] {block.text.strip()}")
+                executor.run.log_text(block.text.strip())
 
         tool_uses = [b for b in resp.content if b.type == "tool_use"]
         if not tool_uses:

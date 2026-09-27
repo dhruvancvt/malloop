@@ -11,6 +11,11 @@ def _env(name: str, default: str) -> str:
 
 RUNS_DIR = Path(_env("MALLOOP_RUNS_DIR", str(ROOT / "runs")))
 
+# Web viewer: read-only local browser for runs/<id>/ reports. Loopback-only by default — run reports
+# contain real IOCs (C2 hosts, ransom notes, etc), so don't bind this beyond 127.0.0.1 without adding auth.
+VIEWER_HOST = _env("MALLOOP_VIEWER_HOST", "127.0.0.1")
+VIEWER_PORT = int(_env("MALLOOP_VIEWER_PORT", "8787"))
+
 # Agent
 MODEL = _env("MALLOOP_MODEL", "claude-opus-5-5")
 MAX_ITERATIONS = int(_env("MALLOOP_MAX_ITERATIONS", "12"))

@@ -225,3 +225,30 @@ def test_status_and_trace_endpoints_cannot_traverse(viewer_server, path):
     conn.close()
     assert resp.status == 404, path
     assert b"host secret" not in body
+
+
+def test_trace_shows_the_brief_and_what_the_agent_saw(viewer_server, monkeypatch):
+    monkeypatch.setattr(config, "MAX_TOOL_OUTPUT_CHARS", 50)
+    run_id = "20260924-100156-dddddddddddd"
+    run_dir = _write_run(viewer_server["runs_dir"], run_id, triage={"file": "x", "sha256": "d" * 64},
+                         status={"stage": "done"}, trace_lines=[
+                             json.dumps({"n": 1, "tool": "search_strings", "params": {"pattern": "http"},
+                                         "result": {"matches": ["x" * 100]}}),
+                             json.dumps({"n": 2, "tool": "list_extracted", "params": {}, "result": {"ok": 1}})])
+    (run_dir / "brief.json").write_text(json.dumps({"triage": {"note": "<script>x</script>"}}))
+    page = requests.get(viewer_server["url"] + f"/runs/{run_id}", timeout=5).text
+    assert "initial brief" in page and "&lt;script&gt;x" in page and "<script>x" not in page
+    assert "input: {\n  &quot;pattern&quot;: &quot;http&quot;\n}" in page
+    assert page.count("the agent saw only the first 50 of") == 1
+    # the live endpoint carries the same label, so polled entries render the same way
+    entries = requests.get(viewer_server["url"] + f"/runs/{run_id}/trace?since=0", timeout=5).json()
+    assert entries[0]["output_label"].startswith("output (the agent saw only") and entries[1]["output_label"] == "output"
+
+
+def test_failed_run_shows_its_error_and_is_not_polled(viewer_server):
+    run_id = "20260924-100156-eeeeeeeeeeee"
+    _write_run(viewer_server["runs_dir"], run_id, triage={"file": "Vex.exe", "sha256": "e" * 64},
+               status={"stage": "failed", "error": "TypeError: no API key"})
+    page = requests.get(viewer_server["url"] + f"/runs/{run_id}", timeout=5).text
+    assert "failed: TypeError: no API key" in page and "<script>" not in page
+    assert "failed" in requests.get(viewer_server["url"] + "/", timeout=5).text

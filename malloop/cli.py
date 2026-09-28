@@ -57,7 +57,14 @@ def analyze(sample: Path, static_only: bool, client=None, sandbox=None) -> Path 
     sha256 = hashlib.sha256(sample.read_bytes()).hexdigest()
     run = Run.create(config.RUNS_DIR, sample, sha256)
     print(f"[*] run dir: {run.run_dir}")
+    try:
+        return _pipeline(run, sample, static_only, client, sandbox)
+    except BaseException as e:  # includes Ctrl+C: otherwise the viewer shows a dead run as still in progress
+        run.set_status("failed", error=f"{type(e).__name__}: {e}")
+        raise
 
+
+def _pipeline(run: Run, sample: Path, static_only: bool, client, sandbox) -> Path | None:
     run.set_status("unpack")
     print("[*] stage 0: recursive unpack")
     nodes = unpack_tree(sample, run.run_dir / "extracted")

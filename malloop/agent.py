@@ -46,6 +46,7 @@ def run_agent(initial_evidence: dict, executor: ToolExecutor, log=print, client=
     """Drive the tool-use loop. `client` defaults to a real Anthropic client; tests inject a scripted one."""
     client = client or anthropic.Anthropic()
     brief = build_brief(initial_evidence, config.MAX_INITIAL_EVIDENCE_CHARS)
+    executor.run.save("brief", brief)  # what the agent starts from, for the viewer
     sandbox = getattr(executor, "sandbox", None)
     dynamic = bool(getattr(sandbox, "available", False))
     tools = tools_for(dynamic)

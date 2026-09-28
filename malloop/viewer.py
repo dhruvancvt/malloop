@@ -38,9 +38,9 @@ POLL_JS = """
       var sum = document.createElement('summary');
       sum.textContent = '#' + e.n + ' ' + e.tool;
       var p1 = document.createElement('pre');
-      p1.textContent = 'params: ' + JSON.stringify(e.params);
+      p1.textContent = 'input: ' + JSON.stringify(e.params, null, 2);
       var p2 = document.createElement('pre');
-      p2.textContent = 'result: ' + JSON.stringify(e.result);
+      p2.textContent = (e.output_label || 'output') + ': ' + JSON.stringify(e.result, null, 2);
       det.appendChild(sum); det.appendChild(p1); det.appendChild(p2);
       list.appendChild(det);
     }
@@ -57,7 +57,7 @@ POLL_JS = """
             ? ' (iteration ' + s.iteration + '/' + s.max_iterations + ')' : '';
           el.textContent = 'stage: ' + s.stage + extra;
         }
-        if (s.stage === 'done') { location.reload(); } else { setTimeout(tick, 2000); }
+        if (s.stage === 'done' || s.stage === 'failed') { location.reload(); } else { setTimeout(tick, 2000); }
       })
       .catch(function () { setTimeout(tick, 2000); });
   }
@@ -115,10 +115,25 @@ def _load_trace(path: Path) -> list[dict]:
     entries = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
-            entries.append(json.loads(line))
+            e = json.loads(line)
         except json.JSONDecodeError:
             continue  # tolerate a truncated last line from a run still in progress
+        if e.get("type") != "text":
+            e["output_label"] = _output_label(e.get("result"))
+        entries.append(e)
     return entries
+
+
+def _output_label(result) -> str:
+    """Says how much of a tool result got past `_clip` in agent.py to the model."""
+    # ponytail: uses this process's MAX_TOOL_OUTPUT_CHARS, which is the run's unless the env var changed between them
+    n, limit = len(json.dumps(result, default=str)), config.MAX_TOOL_OUTPUT_CHARS
+    return f"output (the agent saw only the first {limit:,} of {n:,} chars)" if n > limit else "output"
+
+
+def _pretty(value, cap: int = 60000) -> str:
+    text = json.dumps(value, indent=2, default=str)
+    return _esc(text[:cap] + (f"\n... [{len(text) - cap:,} more chars]" if len(text) > cap else ""))
 
 
 def _page(title: str, body: str) -> bytes:
@@ -154,6 +169,8 @@ def _status_for(run_dir: Path) -> dict:
 
 def _describe_status(status: dict) -> str:
     stage = status.get("stage", "unknown")
+    if stage == "failed":
+        return f"failed: {status.get('error', 'unknown error')}"
     if stage == "agent" and status.get("iteration") is not None:
         return f"stage: agent (iteration {status['iteration']}/{status.get('max_iterations', '?')})"
     return f"stage: {stage}"
@@ -166,6 +183,8 @@ def _run_summary(run_dir: Path) -> dict:
     sample_name = (unpack[0]["name"] if unpack else (triage or {}).get("file")) or "?"
     if final:
         status = final.get("verdict", "unknown")
+    elif (_load_json(run_dir / "status.json") or {}).get("stage") == "failed":
+        status = "failed"
     elif (run_dir / "static.json").exists():
         status = "no verdict (static-only or incomplete)"
     elif triage:
@@ -242,10 +261,9 @@ def _render_trace_entry(a: dict) -> str:
     # "type" is missing on entries written before this field existed; treat those as tool calls.
     if a.get("type") == "text":
         return f"<div class='trace-text'>#{a.get('n')} <em>[agent]</em> {_esc(a.get('text', ''))}</div>"
-    params = _esc(json.dumps(a.get("params"), default=str))[:4000]
-    result = _esc(json.dumps(a.get("result"), default=str))[:4000]
     return (f"<details><summary>#{a.get('n')} <code>{_esc(a.get('tool'))}</code></summary>"
-            f"<pre>params: {params}</pre><pre>result: {result}</pre></details>")
+            f"<pre>input: {_pretty(a.get('params'))}</pre>"
+            f"<pre>{_esc(a.get('output_label', 'output'))}: {_pretty(a.get('result'))}</pre></details>")
 
 
 def _render_trace(actions: list[dict]) -> str:
@@ -275,14 +293,14 @@ def render_run(run_id: str) -> bytes | None:
     actions = _load_trace(run_dir / "trace.jsonl")
     summary = _run_summary(run_dir)
     status = _status_for(run_dir)
-    live = status.get("stage") != "done"
+    live = status.get("stage") not in ("done", "failed")
 
     confidence_text = f"(confidence {final.get('confidence')})" if final else ""
     sections = ["<p><a href='/'>&laquo; all runs</a></p>",
                 f"<h1>{_esc(summary['sample_name'])}</h1>",
                 f"<p>{_badge(summary['status'])} {_esc(confidence_text)} "
                 f"&middot; started {summary['timestamp']} &middot; <code>{_esc(run_id)}</code></p>"]
-    if live:
+    if status.get("stage") != "done":
         sections.append(f"<p id='live-stage' class='muted'>{_esc(_describe_status(status))}</p>")
 
     if final:
@@ -323,7 +341,10 @@ def render_run(run_id: str) -> bytes | None:
                          + _esc(json.dumps(static.get("ghidra"), indent=2, default=str))[:8000] + "</pre></details>"
                          "</div>")
 
-    sections.append("<div class='section'><h2>Agent trace</h2><div id='trace-list'>"
+    brief = _load_json(run_dir / "brief.json")
+    brief_html = ("<details><summary>#0 <code>initial brief</code> (the evidence the agent started from)</summary>"
+                  f"<pre>{_pretty(brief)}</pre></details>") if brief else ""
+    sections.append("<div class='section'><h2>Agent trace</h2>" + brief_html + "<div id='trace-list'>"
                      + _render_trace(actions) + "</div></div>")
     if live:
         since0 = max((a.get("n", 0) for a in actions), default=0)

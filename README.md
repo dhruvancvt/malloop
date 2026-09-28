@@ -61,7 +61,9 @@ python -m malloop viewer
 Serves on `http://127.0.0.1:8787` by default (`MALLOOP_VIEWER_HOST`/`MALLOOP_VIEWER_PORT`). The index
 lists past runs; a run's page shows the verdict, evidence, triage, static analysis and the full agent
 trace, and — while a run is still in progress — polls for new trace entries and the current
-stage/iteration until it finishes. Everything rendered is sample-derived and untrusted, so it's all
+stage/iteration until it finishes. The trace starts with the brief the agent was given (`brief.json`),
+and each tool call shows its input and output, including how much of a long output the agent actually
+saw (`MALLOOP_MAX_TOOL_OUTPUT_CHARS`). A run that crashes or is interrupted is marked `failed` with its error. Everything rendered is sample-derived and untrusted, so it's all
 HTML-escaped the same way the `<untrusted>` wrapper protects the model; don't bind it beyond
 loopback without adding auth in front of it.
 
@@ -243,6 +245,8 @@ surfaced most of the gotchas below, so it's documented in full.
        Set-ItemProperty -Name NoActiveProbe -Type DWord -Value 1
    Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\NlaSvc\Parameters\Internet EnableActiveProbing 0
    Set-Service W32Time -StartupType Disabled   # Guest Additions keep the clock in sync
+   # Defender quarantines samples before they run. On Server it's a removable feature; reboot afterwards.
+   Uninstall-WindowsFeature Windows-Defender
    ```
 4. Shut the guest down cleanly, then from the host switch the network:
    ```bash

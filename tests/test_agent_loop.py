@@ -190,6 +190,7 @@ def test_full_loop_end_to_end(workspace, monkeypatch, capsys):
     assert (run_dir / "artifacts" / "dynamic1" / "sysmon.json").exists()
     status = json.loads((run_dir / "status.json").read_text())
     assert status["stage"] == "done"
+    assert json.loads((run_dir / "brief.json").read_text()) == brief  # the viewer shows exactly what the model saw
     md = report.read_text(encoding="utf-8")
     assert "**malicious**" in md and "T1547.001" in md and "`evil.example.xyz`" in md
     assert "## Container contents" in md and "`run_dynamic`" in md
@@ -209,7 +210,7 @@ def test_iteration_budget_forces_inconclusive(workspace, monkeypatch):
 
 
 def fake_run():
-    return SimpleNamespace(set_status=lambda *a, **k: None, log_text=lambda *a, **k: None)
+    return SimpleNamespace(set_status=lambda *a, **k: None, log_text=lambda *a, **k: None, save=lambda *a, **k: None)
 
 
 def test_text_only_reply_gets_nudged():
@@ -375,3 +376,19 @@ def test_capture_reaches_the_model_and_flags_a_silent_fake_dns():
     assert "fake_dns_note" not in summarize_dynamic({**base, "pcap": elsewhere, "fake_dns": {"queries": []}})
 
     assert "pcap" not in summarize_dynamic(base) and "fake_dns" not in summarize_dynamic(base)
+
+
+def test_crash_marks_the_run_failed_instead_of_leaving_it_live(workspace):
+    class NoKeyClient:
+        def __init__(self):
+            self.messages = self
+
+        def create(self, **kw):
+            raise TypeError("Could not resolve authentication method")
+
+    with pytest.raises(TypeError):
+        cli.analyze(make_bundle(workspace), static_only=False, client=NoKeyClient(), sandbox=FakeSandbox())
+    (run_dir,) = config.RUNS_DIR.iterdir()
+    status = json.loads((run_dir / "status.json").read_text())
+    assert status == {"stage": "failed", "error": "TypeError: Could not resolve authentication method",
+                      "ts": status["ts"]}

@@ -1,4 +1,4 @@
-anthropic>=1.7.0
+anthropic>=1.8.0
 requests>=2.34.2
 pefile>=2024.8.26
 yara-python>=4.5.4

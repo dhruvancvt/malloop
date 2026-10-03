@@ -94,9 +94,6 @@ class NoSandbox(Sandbox):
     def poweroff(self) -> None:
         pass
 
-    def detonate(self, *a, **kw) -> dict:
-        return {"skipped": "no sandbox backend configured; dynamic analysis unavailable"}
-
 
 def get_sandbox() -> Sandbox:
     if config.SANDBOX_BACKEND == "virtualbox":

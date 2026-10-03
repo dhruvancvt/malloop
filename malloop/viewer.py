@@ -6,7 +6,6 @@ params/results) is untrusted the same way it is for the LLM in agent.py's <untru
 HTML-escaped before it reaches a template. Never bind this to a non-loopback address without also
 putting auth in front of it: run reports contain real IOCs (C2 hosts, ransom notes, etc).
 """
-import argparse
 import html
 import json
 import re
@@ -410,15 +409,3 @@ def serve(host: str, port: int) -> None:
         pass
     finally:
         server.server_close()
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(prog="malloop.viewer")
-    ap.add_argument("--host", default=config.VIEWER_HOST)
-    ap.add_argument("--port", type=int, default=config.VIEWER_PORT)
-    args = ap.parse_args()
-    serve(args.host, args.port)
-
-
-if __name__ == "__main__":
-    main()

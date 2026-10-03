@@ -43,6 +43,9 @@ Add capa, FLOSS and Ghidra to get the full static stage — see [Installing Ghid
 Ghidra needs more than just the env var. Missing tools are skipped, not fatal. Instead of installing capa and
 FLOSS on the host, you can run them in an isolated Linux VM — see [Static worker](#static-worker-capa--floss-in-remnux).
 
+Run `python -m malloop doctor` to see which optional tools (Ghidra, capa, FLOSS, 7-Zip, sandbox) are detected.
+Every run also writes `runs/<id>/iocs.csv`, a flat `type,value` feed of the verdict's IOCs for SOC ingestion.
+
 ## Full loop
 
 ```bash

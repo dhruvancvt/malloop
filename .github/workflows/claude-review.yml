@@ -32,6 +32,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           trigger_phrase: "@claude"
+          track_progress: true  # post the review back as a PR comment (agent mode is otherwise silent)
           prompt: |
             Review the changes in this pull request. This is malloop, a malware-analysis
             pipeline; read AGENTS.md for the invariants that must never break. Focus on:

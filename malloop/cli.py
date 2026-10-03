@@ -1,7 +1,9 @@
 """Entry point: python -m malloop analyze <file> [--static-only]"""
 import argparse
+import csv
 import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -49,6 +51,18 @@ def write_report(run: Run, triage_report: dict, final: dict, tree: list[dict]) -
             lines.append(f"{a['n']}. `{a['tool']}` {json.dumps(a['params'])}")
     path = run.run_dir / "report.md"
     path.write_text("\n".join(lines), encoding="utf-8")
+    write_iocs_csv(run.run_dir / "iocs.csv", final)
+    return path
+
+
+def write_iocs_csv(path: Path, final: dict) -> Path:
+    """Flatten the verdict's IOCs into a SOC-ingestible CSV (type,value)."""
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["type", "value"])
+        for kind, vals in (final.get("iocs") or {}).items():
+            for v in vals:
+                w.writerow([kind, v])
     return path
 
 
@@ -118,6 +132,33 @@ def _pipeline(run: Run, sample: Path, static_only: bool, client, sandbox) -> Pat
     return report
 
 
+def doctor() -> int:
+    """Probe the optional external tools and print which are present. Returns 1 if any required-ish tool is missing."""
+    from .sandbox import get_sandbox
+    from .unpack import seven_zip
+
+    ghidra = config.GHIDRA_HEADLESS if (config.GHIDRA_HEADLESS and Path(config.GHIDRA_HEADLESS).exists()) else None
+    sevenz = seven_zip()
+    checks = [
+        ("Ghidra (decompiler)", ghidra, "set GHIDRA_HEADLESS to analyzeHeadless.bat"),
+        ("capa (capabilities)", shutil.which(config.CAPA_BIN), "pip install flare-capa, or set CAPA_BIN"),
+        ("FLOSS (string deobfuscation)", shutil.which(config.FLOSS_BIN), "pip install flare-floss, or set FLOSS_BIN"),
+        ("7-Zip (unpacking)", sevenz, "install 7-Zip, or set SEVEN_ZIP"),
+        ("YARA rules dir", str(config.YARA_RULES_DIR) if config.YARA_RULES_DIR.is_dir() else None,
+         f"create {config.YARA_RULES_DIR} or set MALLOOP_YARA_DIR"),
+        (f"Sandbox ({config.SANDBOX_BACKEND})", "ready" if get_sandbox().available else None,
+         "see README VM setup, or run with --static-only"),
+        ("Static worker (remote capa/FLOSS)", config.STATIC_WORKER_URL or None, "optional; set MALLOOP_STATIC_WORKER_URL"),
+    ]
+    missing = 0
+    for name, found, hint in checks:
+        print(f"  [{'ok ' if found else '-- '}] {name:<34} {found or 'not found: ' + hint}")
+        missing += not found
+    print(f"\n{len(checks) - missing}/{len(checks)} tools available."
+          + (" Missing tools degrade gracefully (stages are skipped)." if missing else ""))
+    return 0
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="malloop")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -127,7 +168,10 @@ def main() -> None:
     v = sub.add_parser("viewer", help="serve a read-only web viewer for runs/<id>/ reports")
     v.add_argument("--host", default=config.VIEWER_HOST)
     v.add_argument("--port", type=int, default=config.VIEWER_PORT)
+    sub.add_parser("doctor", help="check which optional external tools are installed")
     args = ap.parse_args()
+    if args.cmd == "doctor":
+        sys.exit(doctor())
     if args.cmd == "viewer":
         from .viewer import serve
         return serve(args.host, args.port)

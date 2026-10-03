@@ -13,8 +13,10 @@ permissions:
   id-token: write        # the action mints its GitHub token via OIDC
 
 concurrency:
+  # Not cancel-in-progress: track_progress posts a "working…" bot comment, which fires another
+  # issue_comment event in this same group — cancelling would kill the very review that posted it.
   group: claude-review-${{ github.event.issue.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   review:

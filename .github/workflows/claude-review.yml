@@ -1,0 +1,42 @@
+name: Claude review
+
+# On-demand PR review: runs only when a repo owner/collaborator comments "@claude" on a pull
+# request. The author gate matters because this is a public repo and the run spends ANTHROPIC_API_KEY,
+# so a stranger's comment must not be able to trigger it.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write  # post the review as a PR comment
+
+concurrency:
+  group: claude-review-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@claude') &&
+      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the action diffs against the base branch
+          persist-credentials: false
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          trigger_phrase: "@claude"
+          prompt: |
+            Review the changes in this pull request. This is malloop, a malware-analysis
+            pipeline; read AGENTS.md for the invariants that must never break. Focus on:
+            - the safety invariants in AGENTS.md (no samples committed, no host execution,
+              agent has no shell, sample-derived text stays <untrusted>, bounded/path-safe parsing,
+              no real network in detonation, budgets enforced in code)
+            - correctness bugs and missing edge cases
+            - unbounded or path-unsafe parsing of attacker-controlled input
+            Be concise: only flag real issues, and skip style nits ruff already covers.
